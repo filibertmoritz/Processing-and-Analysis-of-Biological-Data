@@ -1,0 +1,73 @@
+---
+title: "Chapter1_Preface_Exercise"
+format: html
+---
+
+## Task 1: 
+
+Use non-parametric bootstrapping to derive a 95% confidence interval for the CV of a variable. Start by writing a function that computes the CV for a variable (see the Appendix for a brief introduction to writing functions in `R`). Then, simulate a random variable and write a loop that samples many times from this variable and computes the CV.
+
+
+```{r}
+
+# write function to calculate CV
+CV <- function(input){
+  result <- sqrt(var(input))/mean(input, na.rm = T)
+  return(result)
+}
+
+# simulate random variable - I chose a normal distribution with a mean of 15 and a standard deviation of 4
+randomVar <- rnorm(100, mean = 15, sd = 4)
+
+# bootstrappting using for loop 
+set.seed(123)
+n <- 100 # set number of samples
+outcome <- NULL # initialise vec
+for(i in 1:n){
+  data <- sample(randomVar, replace = T)
+  outcome[i] <- CV(input = data)
+}
+
+# compute quantile
+qu <- quantile(outcome, probs = c(0.025, 0.975))
+
+# plot result
+hist(outcome)
+abline(v = qu[1])
+abline(v = qu[2])
+
+```
+
+## Task 2: The proportional properties of the natural log
+
+Use simulated data to show the close relationship between the SD of log-transformed data and the CV on
+arithmetic scale. You may need e.g. the rnorm function and a for-loop to achieve this. One strategy would
+be to start with comparing the two values for a single case, then build a matrix to hold the paired values,
+and finally use a for-loop to populate the matrix. See Appendix 1 for help to get started with programming.
+The following figure illustrates the kind of pattern we expect.
+Before starting to work on exercises in R, read the Appendix on reproducibility, and think about whether
+you would like to create a GitHub account for all your materials from this course.
+
+
+```{r, warning=F}
+
+n <- 100 # set sample size
+res <- matrix(NA, nrow = n, ncol = 2)
+sdvalues <- runif(n, 2,5)
+
+for(i in 1:n){
+  vec <- rnorm(100, 20, sdvalues[i])
+  res[i,1] <- sd(log(vec), na.rm = T)
+  res[i,2] <- CV(input = vec) # use prev. built function to calc CV
+}
+
+# plot the result
+plot(y = res[,1], x = res[,2], ylab = 'SD[log(x)]', xlab = 'CV[x]', 
+     main = 'Relation between SD of log transformed data and the Coefficient of variance')
+lines(x = seq(0.05, 0.3, by = 0.01), y = seq(0.05, 0.3, by = 0.01), col = 'red')
+
+```
+
+
+
+
