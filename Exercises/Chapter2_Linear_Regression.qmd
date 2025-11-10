@@ -1,0 +1,174 @@
+---
+title: "Exercise 2 - The Linear Model I: Linear regression"
+format: html
+---
+
+## Task 1: 
+
+Use the parameter estimates to draw (by hand, on a piece of paper) the scatterplot of y vs. x
+with the regression line, indicating the location of the intercept and roughly the correct slope.
+
+This task was done on a sheet of paper.
+
+## Task 2: Bootstrapping SE's (optional)
+
+Use non-parametric bootstrapping to derive a standard error for the slope of the
+linear regression above. To do so, produce a data frame holding the x and y values, sample from this dataset
+(with replacement), fit the model, and save each estimate for the slope of y on x. The samples will give
+the sampling distribution for the slope, and its standard deviation will provide an estimate of the standard
+error.
+
+
+```{r}
+
+# create data set 
+set.seed(85)
+n <- 200
+x = rnorm(n=n, mean=10, sd=2)
+y = 0.4*x + rnorm(n, 0, 1)
+data <- data.frame(y = y, x = x)
+
+# create input vectors
+slope <- NULL
+n.iter <- 1000 # set n for number iterations
+n.sample <- 200 # set n for number of samples from 
+x.samp <- NULL
+y.samp <- NULL
+
+for(i in 1:n.iter){
+  
+  # sample data from the original data, n.sample
+  index <- sample(1:n.sample, size = n, replace = T)
+  x.samp <- data$x[index]
+  y.samp <- data$y[index]
+  
+  # fit linear model
+  lm <- lm(y.samp~x.samp)
+  
+  # extract slope
+  slope[i] <- lm$coefficients[2]
+}
+
+hist(slope, main= 'Distribution of Slope-Estimates', xlab = 'Slope')
+sd(slope) # calc slope sd, for comparison with SE of estimate of lm 
+summary(lm(data$y~data$x))
+```
+
+
+## Task 3: Fit a linear model to real data
+
+Choose any dataset you may have involving a continuous response variable and a continuous predictor. Fit
+a simple linear regression, interpret the results, produce a nice figure including the fitted regression line, and
+write simple methods and results presenting the analysis and results.
+If you don’t have any data, use the dataset bird_allometry. This dataset contains body mass and brain
+mass for males and females of different bird species. The scaling of brain size (or other body parts) with
+body size is referred to as the study of allometry, and you may want to read about these analyses before
+fitting your models. As a hint, the scaling of parts of a body with body size is expected to follow a power-
+law relationship on the form y = axb, which can be linearized through the logarithmic transformation
+log(y) = log(a) + b × log(x).
+
+
+```{r, warning=F}
+
+# load the data 
+birds <- read.csv("C:/Users/filib/Documents/Studium/Master/Processing and Analysis of Biological Data/data/bird_allometry.csv")
+
+# get overview of the data 
+str(birds)
+summary(birds)
+
+# split data up into two df with only males and females
+male <- birds[birds$Sex == 'm',]
+female <- birds[birds$Sex == 'f',]
+
+# fit models on log-transformed data of body and brain sizes
+mfm <- lm(data = male, formula = log(brain_mass) ~ log(body_mass)) # for males 
+ffm <- lm(data = female, formula = log(brain_mass) ~ log(body_mass)) # for females 
+
+# check model assumptions - NOT great but acceptable
+par(mfrow = c(2,2))
+plot(mfm)
+plot(ffm)
+
+
+hist(residuals(mfm))
+hist(residuals(ffm)) # this doesn't really look good
+
+# call model summary 
+summary(mfm)
+summary(ffm)
+```
+
+
+```{r}
+# produce a plot for male
+plot(x = log(male$body_mass), y = log(male$brain_mass), col = 'blue', 
+     main = 'Relationship between brain size and body size in male bird species', 
+     ylab = 'Log(Brain mass in g)', xlab = 'Log(Body mass in g)') # make scatterplot
+abline(mfm, col = "blue", lwd = 2) # automatically adding a slope using abline
+
+# produce a plot for females, doing everything by hand
+x_pred <- seq(log(min(female$body_mass)), log(max(female$body_mass)), length.out = 100) # create input data 
+y_pred <- predict(ffm, newdata = data.frame(body_mass = exp(x_pred))) # predict
+plot(log(female$body_mass), log(female$brain_mass), col = 'darkred', 
+     main = 'Relationship between brain size and body size in female bird species', 
+     ylab = 'Log(Brain mass in g)', xlab = 'Log(Body mass in g)') # make the scatterplot
+lines(x_pred, y_pred, col = 'darkred', lwd = 2) # manually add line using lines
+
+```
+
+## Optional task: How error in x- and y-variables affect the slope
+
+The standard linear model assumes that the predictor variable is measured without error. When there is
+measurement error, this can lead to a bias in the estimated slope. Simulate data with measurement error in
+the predictor, and produce a plot showing the effect on the estimated slope. As always with programming
+exercises, start by performing the necessary operations once, before building loops or functions. Here, you
+can start by simulating some data, and fit the model with no measurement error. Then, add some error,
+and see what happens to the slope estimate.
+
+For a simple model like this, the expected attenuation bias (downward bias) in the slope can be estimated
+by the reliability ratio K = 1 − ( σme / σx ) where σme is the measurement error variance and σx is the variance in the predictor x. We can thus obtain a corrected slope as β′ = β/K
+Try to correct your estimated slopes in this way, and produce a plot showing both the estimated and the
+corrected slope connected by line segments.
+
+
+```{r}
+
+# data simulation 
+n <- 1000
+x_sim = seq(0,100, length.out = n)
+y_sim = 1.65*x_sim
+error_sd <- seq(from = 0, to = 15, by = 0.5)
+
+# input vectors
+x <- NULL
+y <- NULL
+s <- NULL
+s_corrected <- NULL
+K <- NULL
+
+for(i in 1:length(error_sd)){
+  error <- rnorm(n,mean = 0, sd = error_sd[i])
+  x <- x_sim + error
+  model <- lm(y_sim ~ x)
+  s[i] <- coef(model)[2]
+  K <- 1 - (var(error)/var(x))
+  s_corrected[i] <- s[i]/K
+}
+
+# plot the result
+plot(y = s, x = error_sd, main = 'Slopes with Increasing Standard Deviation in the Predictor', 
+     ylab = 'Estimates of the slope', xlab = 'Standard deviation of the measurement error', 
+     ylim = c(min(s), max(s_corrected)))
+points(y =s_corrected, x = error_sd, pch = 16)
+segments(x0 = error_sd, y0 = s, x1 = error_sd, y1 = s_corrected, col = "gray")
+abline(h = 1.65, lty = 2, col = "black")
+legend("bottomleft",
+       legend = c("Estimated slope", "Corrected slope", "True slope"),
+       col = c("black", "black", "black"),
+       pch = c(1, 16, NA),
+       lty = c(NA, NA, 2))
+
+```
+
+
