@@ -1,0 +1,77 @@
+---
+title: "Exercise 3 - ANOVA"
+format: pdf
+---
+
+## Task:
+
+The following data are from an experiment where female butterflies reared on two different host plants were allowed to oviposit on the same two host plants. The data include developmental time for the larvae, the adult weight, and the growth rate of the larvae. Analyse the data to assess effects of maternal vs. larval host plant on one or more response variables. Interpret the results and produce a nice plot to illustrate.
+
+Here, I first prepare the data:
+
+```{r, include=FALSE}
+# load packages and set basic functions
+library(tidyverse)
+filter <- dplyr::filter
+select <- dplyr::select
+rename <- dplyr::rename
+
+# read in data 
+data <- read.csv('C:/Users/filib/Documents/Studium/Master/Processing and Analysis of Biological Data/data/butterflies.csv',
+                 stringsAsFactors = T)
+
+# check data str
+str(data) # looks basically alright 
+
+```
+
+## 1. Introduction
+
+Butterflies' life cycles are closely related to their host plants. However, often different host plants are be required for both adults and offspring as food resources. 
+Here, an experiment has been conducted were both adults and offspring lied eggs and fed, respectively, on the same host plants to test the effects of two different host plants of adults and offspring on measures of reproduction (development time, caterpillar growth rate and adult mass). 
+
+
+## 2. Analysis Methods
+
+
+
+```{r}
+# fit the model
+m1 <- lm(AdultWeight ~ MaternalHost+LarvalHost, data = data)
+m2 <- lm(GrowthRate ~ MaternalHost*LarvalHost, data = data)
+
+# call anova
+anova(m1)
+anova(m2)
+
+# get summary 
+summary(m1)
+summary(m2)
+
+```
+## 3. Results
+
+```{r}
+# produce a plot for each hypothesis 
+data %>% # for growth rate
+  ggplot() + 
+  geom_boxplot(mapping = aes(x = LarvalHost, y = GrowthRate, fill = MaternalHost)) + 
+  labs(y = 'Growth rate in mm/day (?)', x = 'Larval host plant', fill = 'Maternal host plant', 
+       title = 'Effect of host plants on butterflies growth rate') +
+  theme_bw() +
+  theme(legend.position = c(0.88,0.85))
+
+data %>% # for adult weight
+  ggplot() + 
+  geom_boxplot(mapping = aes(x = LarvalHost, y = AdultWeight, fill = MaternalHost)) + 
+  labs(y = 'Adult weight in g (?)', x = 'Larval host plant', fill = 'Maternal host plant', 
+       title = 'Effect of host plants on butterflies adult weight') +
+  theme_bw() +
+  theme(legend.position = c(0.88,0.85))
+
+```
+
+
+## 4. Discussion
+
+## 5. Conclusion
