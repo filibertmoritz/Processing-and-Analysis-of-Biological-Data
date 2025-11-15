@@ -1,17 +1,19 @@
 ---
-title: "Exercise 3 - ANOVA"
-format: pdf
+title: "Exercise 3 - Analysis of Variance (ANOVA)"
+author: 'Filibert Heim'
+format: html
 ---
 
-## Task:
+## Task
 
 The following data are from an experiment where female butterflies reared on two different host plants were allowed to oviposit on the same two host plants. The data include developmental time for the larvae, the adult weight, and the growth rate of the larvae. Analyse the data to assess effects of maternal vs. larval host plant on one or more response variables. Interpret the results and produce a nice plot to illustrate.
-
-Here, I first prepare the data:
 
 ```{r, include=FALSE}
 # load packages and set basic functions
 library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(webshot)
 filter <- dplyr::filter
 select <- dplyr::select
 rename <- dplyr::rename
@@ -27,18 +29,24 @@ str(data) # looks basically alright
 
 ## 1. Introduction
 
-Butterflies' life cycles are closely related to their host plants. However, often different host plants are be required for both adults and offspring as food resources. 
-Here, an experiment has been conducted were both adults and offspring lied eggs and fed, respectively, on the same host plants to test the effects of two different host plants of adults and offspring on measures of reproduction (development time, caterpillar growth rate and adult mass). 
-
+Butterflies' life cycles are closely adapted to their host plants, but these host plants may differ between populations. To assess the effect of two different host plants on the development of caterpillars, butterfly eggs from two different populations with different host plants were put on both plant species (Barbarea and Berteroa) for development of the caterpillars. For both larval growth and adult mass, I expected one host plant to provide optimal conditions for reproduction in this particular butterfly species - which it is more closely adapted to. Also, I expected overall higher effects of the larval than the maternal host plant due to its proximity to the measured processes - larval growth and adult mass.
 
 ## 2. Analysis Methods
 
+I employed an analysis of variance (ANOVA) to test the effects of both maternal and larval host plants (predictor/independent variables) on the caterpillar development. In more detail, larval development was measured as growth rate (in g per day) and the final mass of the adults (in g) and used as (response/dependent variables). Thus, I built two separate ANOVA's reflecting the following hypotheses:
 
+**1)** Adult butterfly mass depends on the maternal and larval host plant. This hypothesis was represented in the model larval growth \~ maternal host + larval host.
 
-```{r}
+**2)** Larval growth rate depends on the maternal and larval host plant. This hypothesis was represented by the model adult mass \~ maternal host + larval host.
+
+I did not consider any interactions between larval host plants on neither adult mass nor larval growth rate since I lack a biological mechanism to justify an inclusion of this hypothesis.
+
+All analysis were conducted in R using the functions lm() and anova(lm()) (R Core Team, 2024).
+
+```{r, include=F}
 # fit the model
 m1 <- lm(AdultWeight ~ MaternalHost+LarvalHost, data = data)
-m2 <- lm(GrowthRate ~ MaternalHost*LarvalHost, data = data)
+m2 <- lm(GrowthRate ~ MaternalHost+LarvalHost, data = data)
 
 # call anova
 anova(m1)
@@ -49,29 +57,107 @@ summary(m1)
 summary(m2)
 
 ```
+
 ## 3. Results
 
-```{r}
-# produce a plot for each hypothesis 
-data %>% # for growth rate
-  ggplot() + 
-  geom_boxplot(mapping = aes(x = LarvalHost, y = GrowthRate, fill = MaternalHost)) + 
-  labs(y = 'Growth rate in mm/day (?)', x = 'Larval host plant', fill = 'Maternal host plant', 
-       title = 'Effect of host plants on butterflies growth rate') +
-  theme_bw() +
-  theme(legend.position = c(0.88,0.85))
+I analysed measurement data on the development of `{r} dim(data)[1]` butterlies by employing ANOVA's and linear regressions.
+Overall, host plants effect the development of larvae considerably but the magnitudes of the effect differ between larval and maternal host plants. 
 
-data %>% # for adult weight
-  ggplot() + 
-  geom_boxplot(mapping = aes(x = LarvalHost, y = AdultWeight, fill = MaternalHost)) + 
-  labs(y = 'Adult weight in g (?)', x = 'Larval host plant', fill = 'Maternal host plant', 
-       title = 'Effect of host plants on butterflies adult weight') +
-  theme_bw() +
-  theme(legend.position = c(0.88,0.85))
+In more detail, **larval growth rate** (with an overall mean of `{r} round(mean(data$GrowthRate),3)` g per day across all host plants) was considerably affected by the larval host: For a caterpillar with Barbarea as both maternal and larval host the mean growth rate was `{r} round(coef(m2)[1], 3)`, but if the larval host plant was Berteroa instead a reduction by `{r} abs(round(coef(m2)[3], 3))` (CI (2.5 % and 97.5 %): `{r} round(abs(confint(m2)[3,][1]),3)` - `{r} round(abs(confint(m2)[3,][2]),3)`) or `{r} round((abs(coef(m2)[3])*100)/coef(m2)[1],3)` % (CI: `{r} round((abs(confint(m2)[3,])*100) / confint(m2)[1,],3)[1]` - `{r} round((abs(confint(m2)[3,])*100) / confint(m2)[1,],3)[2]` %)  occurred. In comparison, little or no effect was observed if  Barbarea was the maternal host plant with solely a reduction in the growth rate by `{r} abs(round(coef(m2)[2], 3))` (CI: `{r} round(abs(confint(m2)[2,][1]),3)` - `{r} round(abs(confint(m2)[2,][2]),3)`) g per day or `{r} round((abs(coef(m2)[2])*100)/coef(m2)[1],3)` % (CI: `{r} round((abs(confint(m2)[2,])*100) / confint(m2)[1,],3)[1]` - `{r} round((abs(confint(m2)[2,])*100) / confint(m2)[1,],3)[2]` %) on average. However, note the significant uncertainty in the latter effect size estimates for the maternal host plant. See Table 1 and 2 for more information.
+
+```{r, echo=F}
+
+
+# produce pretty for anova2
+kable(anova(m2), format = "html", digits = 3, caption = "Table 1: Larval growth rate - Analyis of variance table") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE,
+                position = "left") %>%
+  # row_spec(0, ) %>% # header bold
+  row_spec(0, bold = TRUE, extra_css = "border-bottom: 1.5px solid black;border-top: 2px solid black;") %>%
+  row_spec(3, extra_css = "border-bottom: 2px solid black;") %>% 
+  column_spec(1, bold = TRUE) # bold first column
+
+
+kable(summary(m2)$coefficients, format = "html", digits = 3, caption = "Table 2: Larval growth rate - Effect size table") %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE,
+                position = "left") %>% 
+  row_spec(0, bold = TRUE, extra_css = "border-bottom: 1.5px solid black;border-top: 2px solid black;") %>%
+  row_spec(3, extra_css = "border-bottom: 2px solid black;") %>% 
+  column_spec(1, bold = TRUE)
+
 
 ```
 
+<br>
 
-## 4. Discussion
+The **adult weight** as alternative measure of juvenile development was mainly affected by the larval host plant. In more detail, the larval host plant explained `{r} round((anova(m1)['LarvalHost','Sum Sq']/ anova(m1)['Residuals','Sum Sq'])*100,3) ` % of the total variance, but in contrast the maternal host plant was unimportant and explained only `{r} round((anova(m1)['MaternalHost','Sum Sq']/ anova(m1)['Residuals','Sum Sq'])*100,3) ` of the total variance in the adult weight. Furthermore, if Barbarea was both maternal and larval host plant, the mean adult weight was `r round(coef(summary(m1))[1],3)` g.  If Berteroa was the larval host plant, this led to a mean weight reduction of `r abs(round(coef(m1)[3], 3))` g (CI: `r round(abs(confint(m1)[3, 1]), 3)` – `r round(abs(confint(m1)[3, 2]), 3)`) g, or `r round((abs(coef(m1)[3]) * 100) / coef(m1)[1], 3)` % (CI: `r round((abs(confint(m1)[3, ]) * 100) / confint(m1)[1, ], 3)[1]` – `r round((abs(confint(m1)[3, ]) * 100) / confint(m1)[1, ], 3)[2]` %).
 
-## 5. Conclusion
+
+```{r, echo=F}
+
+# produce pretty table for anova 
+kable(anova(m1), format = "html", digits = 3, caption = "Table 1: Adult weight - Analyis of variance table") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE,
+                position = "left") %>%
+  # row_spec(0, ) %>% # header bold
+  row_spec(0, bold = TRUE, extra_css = "border-bottom: 1.5px solid black;border-top: 2px solid black;") %>%
+  row_spec(3, extra_css = "border-bottom: 2px solid black;") %>% 
+  column_spec(1, bold = TRUE) # bold first column
+
+# produce pretty table for coefficients from linear regression
+kable(summary(m1)$coefficients, format = "html", digits = 3, caption = "Table 2: Adult weight - Effect size table") %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE,
+                position = "left") %>% 
+  row_spec(0, bold = TRUE, extra_css = "border-bottom: 1.5px solid black;border-top: 2px solid black;") %>%
+  row_spec(3, extra_css = "border-bottom: 2px solid black;") %>% 
+  column_spec(1, bold = TRUE)
+
+```
+
+## 4. Discussion and Conclusion
+
+I showed that the studied butterfly species is better adapted to Barbarea than Berteroa as larval host plant. This becomes clear by the considerable reduction of 25.077 and 21.103 % in larval growth and adult mass, respectively, if the caterpillars fed on Berteroa instead of Barbarea. However, I found only little (for caterpillar growth rate) or no support (for adult mass) for an effect of maternal host on the offspring development in our data. 
+
+
+```{r, echo=F, warning=F}
+
+#| fig-cap: 'Figure 1: Effect of host plants on butterflies growth rate'
+# produce a plot for each hypothesis 
+data %>% # for growth rate
+  ggplot() + 
+  geom_point(aes(x = LarvalHost, y = GrowthRate,color = MaternalHost), 
+             position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.8), show.legend = F) +
+  geom_boxplot(mapping = aes(x = LarvalHost, y = GrowthRate, fill = MaternalHost), alpha = 0.4) + 
+  labs(y = 'Growth rate in g per day (?)', x = 'Larval host plant', fill = 'Maternal host plant', 
+        title = 'Figure 1: Effect of host plants on butterflies growth rate'
+       ) +
+  theme_bw() +
+  theme(legend.position = c(0.85,0.85))
+
+
+
+```
+
+```{r,  echo=F, warning=F}
+
+data %>% # for adult weight
+  ggplot() + 
+  geom_point(aes(x = LarvalHost, y = AdultWeight,color = MaternalHost), 
+             position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.8), show.legend = F) +
+  geom_boxplot(mapping = aes(x = LarvalHost, y = AdultWeight, fill = MaternalHost), alpha = 0.4) + 
+  labs(y = 'Adult weight in g (?)', x = 'Larval host plant', fill = 'Maternal host plant', 
+        title = 'Figure 2: Effect of host plants on butterflies adult weight'
+       ) +
+  theme_bw() +
+  theme(legend.position = c(0.85,0.85))
+
+```
+## Code availablility 
+
+Please find the code for this exercise on my [github page](https://example.com)
+
+
