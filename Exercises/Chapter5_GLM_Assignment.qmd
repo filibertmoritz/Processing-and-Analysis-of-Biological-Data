@@ -57,24 +57,24 @@ corrplot(cor(data %>% select(where(is.numeric))))
 data <- data %>% 
   mutate(altitude.scaled = scale(altitude), land.use.scaled = scale(land.use), 
          forest.scaled = scale(forest), temperature.scaled = 
-           scale(temperature))
+           scale(temperature), effort.scaled = scale(effort))
 
 # built formulas for candidate models 
 formulas <- list(model1 = formula(bee ~ forest.scaled + altitude.scaled + 
-                                    land.use.scaled + temperature.scaled  + 
-                                    (1|method) + (1|effort)), 
+                                    land.use.scaled + temperature.scaled  + effort.scaled +
+                                    (1|method)), 
                  model2 = formula(bee ~ forest.scaled + altitude.scaled + 
-                                    land.use.scaled + (1|method) + (1|effort)), 
-                 model3 = formula(bee ~ forest.scaled + altitude.scaled + 
-                                    (1|method) + (1|effort)), 
-                 model4 = formula(bee ~ forest.scaled + (1|method) + 
-                                    (1|effort)))
+                                    land.use.scaled + effort.scaled + (1|method)), 
+                 model3 = formula(bee ~ forest.scaled + altitude.scaled + effort.scaled +
+                                    (1|method)), 
+                 model4 = formula(bee ~ forest.scaled + effort.scaled + (1|method)), 
+                 model5 = formula(bee ~ effort.scaled + (1|method)))
 
 # fit models in loop and save in list 
 models <- list()
 for(f in names(formulas)){
   models[[f]] <- glmer(formula = formulas[[f]], family = poisson(link = 'log'), 
-                       data = data)
+                       data = data) 
 }
 
 # find best model using AICc 
@@ -83,11 +83,12 @@ aictable_pretty <- aictable %>% tibble() %>%
   rename(`Number of model parameters` = K, `Delta AICc` = Delta_AICc, 
          `AICc weights` = AICcWt, Model = Modnames) %>% 
   select(-LL, -Cum.Wt, -ModelLik) %>% 
-  mutate(Model = case_when(Model == 'model1' ~ 'forest + altitude + 
+  mutate(Model = case_when(Model == 'model1' ~ 'effort + forest + altitude + 
                            land.use + temperature', 
-                           Model == 'model2' ~ 'forest + altitude + land.use', 
-                           Model == 'model3' ~ 'forest + altitude', 
-                           Model == 'model4' ~ 'forest'), 
+                           Model == 'model2' ~ 'effort + forest + altitude + land.use', 
+                           Model == 'model3' ~ 'effort + forest + altitude', 
+                           Model == 'model4' ~ 'effort + forest', 
+                           Model == 'model5' ~ 'effort'), 
          across(c(AICc, `Delta AICc`, `AICc weights`), ~ round(.x, 2))) %>% 
   kable()
 
@@ -128,9 +129,12 @@ new.data <- data.frame(forest.scaled = make.seq(data$forest.scaled,n = n),
                        land.use.scaled = make.seq(data$land.use.scaled, n = n), 
                        land.use = make.seq(data$land.use, n = n), 
                        altitude.scaled = make.seq(data$altitude.scaled, n = n), 
-                       altitude = make.seq(data$altitude, n = n))
+                       altitude = make.seq(data$altitude, n = n), 
+                       effort.scaled = make.seq(data$effort.scaled, n = n),
+                       effort = make.seq(data$effort, n = n))
 
 predictors <- names(new.data)[grep('scaled', x = names(new.data))]
+predictors <- predictors[!grepl('effort.scaled', x = predictors)] # remove effort
 
 plotting.data <- data.frame(predictor = NULL, 
                             predictor.scaled = NULL, 
@@ -175,7 +179,7 @@ of local land-use classes',
                                    'land use heterogenity as Shannon-diversity
 of local land-use classes', 
                                    'mean annual temperature in degree C')) +
-  facet_wrap(~predictor, scales = 'free') +
+  facet_wrap(~predictor, scales = 'free_x') +
   labs(x = 'Predictor (for unit see legend)', y ='Predicted Bee Abundance') +
   theme_bw(base_size = 10) +
   theme(legend.position = 'right')
@@ -205,9 +209,11 @@ In more detail, abundance data of *Eulaema nigrita* as independent variable was 
   3) mean annual temperature in degree Celsius; and 
   4) altitude in m above sea level (asl). 
   
-  Furthermore, I considered information on the monitoring method (nets, traps or both) and the monitoring effort (measures as time spent in each plot, transferred by taking the log) in the random effects. Thereby, I accounted for difference efficiencies in the applied monitoring methods and varying monitoring efforts, respectively, and reduced the bias due to imperfect detection.
+  Furthermore, I considered information on the monitoring method (nets, traps or both) and the monitoring effort (measures as time spent in each plot, transferred by taking the log) in the random and fixed effects, respectively, in all fitted models. Thereby, I accounted for difference efficiencies in the applied monitoring methods and varying monitoring efforts, respectively, and reduced the bias due to imperfect detection.
 
-Overall, I fitted four candidate models where all four environmental covariates where added step wise in an additive manner to built up from simple to more complex models. Each of these candidate models was compared using the AICc (small sample size corrected Aikaile Information Criterion - approaches the classical AIC for large sample sizes and is therefore generally recommended over the AIC) to find the most parsimonious model. However, I retained the correction for imperfect detection with two crossed random effects (survey method and effort) for all candidate models since I assumed both variables to be important for explaining the observation process. Afterwards, I employed the (set of) model(s) for inference to extract information on the abundance-environmental covariate relationship as a) effect sizes and b) marginal effect plots of each independent variable found to be important.
+Overall, I fitted five candidate models where all four environmental predictors where added step wise in an additive manner to built up from simple to more complex models. Each of these candidate models was compared using the AICc (small sample size corrected Aikaile Information Criterion - approaches the classical AIC for large sample sizes and is therefore generally recommended over the AIC) to find the most parsimonious model. However, I retained the correction for the sampling process (survey method and effort, as random and fixed effect) for all candidate models since I assumed both variables to be important for explaining the observation process. Furthermore, I added one reference model where I only corrected for the sampling effort but did not add any environmental variables. 
+
+Afterwards, I employed the (set of) model(s) for inference to extract information on the abundance-environmental covariate relationship as a) effect sizes and b) marginal effect plots of each independent variable found to be important.
 
 All analysis were performed in R (R Core Team, 2025) and models were fitted using the lme4 package (Bates et. al, 2015). 
 
@@ -220,6 +226,8 @@ ci.abund <- quantile(predict(best.model, type = 'response'), c(0.05, 0.975))
 
 I analysed `{r} dim(data)[1]` abundance observations *Eulaema nigrita* from `{r} length(unique(data$study.area))` survey sites in a poisson GLMM-framework to better understand the habitat preferences of the bee species. 
 
+NB: The Results section wasn't updated yet - the discussion may need slight improvements.
+
 Overall, at each survey site a mean of `{r} mean.abund` (CI: `{r} ci.abund[1]`, `{r} ci.abund[2]`) bees of the species *Eulaema nigrita* were present after correcting for survey method and effort. Thus, the estimated bee abundances differed considerably between survey sites, which can be attributed to habitat differences, as explained by the best, most parsimonious model: The altitude of the survey site had the highest effect on bee abundance with an effect size of 2.82 (CI: 1.76, 3.87) (which corresponds to an increase of 2.82 bees per unit standard deviation in the fraction of forest cover per site, note that all estimates but the intercept are on the scale of standard deviations due to z-scaling prior to model fitting). The second most important predictor variable was the mean annual temperature with an effect size of 2.49 (CI: 1.42, 3.55), being equal to an increase of 2.49 bees per unit standard deviation of annual mean temperature. Both forest and land use heterogeneity were also important predictors for *Eulaema nigrita* abundance but the change in bee abundance per unit standard deviation of both predictors was less considerable (see Table 1 and 2). 
 
 
@@ -228,7 +236,7 @@ Overall, at each survey site a mean of `{r} mean.abund` (CI: `{r} ci.abund[1]`, 
 effect.sizes.pretty
 ```
 
-All inference was solely based on the single best model since I found overwhelming support for this full model indicated by the delta AICc and AICc weights, for more details see Table 2. No model averaging with other candidate models was needed.
+All inference was solely based on the single best model since I found overwhelming support for this full model indicated by the delta AICc and AICc weights, for more details see Table 2. No model averaging with other candidate models was needed (see Table 2).
 
 
 ```{r, echo = F, fig.}
@@ -245,30 +253,36 @@ I used a GLMM modelling framework to better understand the habitat requirements 
 #| fig-width: 10
 #| fig-height: 6
 #| fig.align: center
-#| fig-cap: "Effect of environmental covariates on predicted Eulaema nigrita abundance. The Abundance was explained using a GLMM framework where only the influence of the fixed effects are shown here but random effects were used to correct for sampling effort and method."
+#| fig-cap: "Effect of environmental covariates on predicted Eulaema nigrita abundance. The Abundance was explained using a GLMM framework where only the influence of the fixed effects included as environmental covariates are shown, but fixed and random effects used to correct for sampling effort and method, respectively."
 
 plot
 ```
 
-I found that both altitude and mean annual temperature are the two striking environmental covariates explaining the species' abundance both showing positive relationships. However the two environmental covariates forest cover and land use heterogeneity were important variables to explain bee abundance (see Table 2), even though their net effect on the abundance was comparably less pronounced (see Table 1). 
+I found that mean annual temperature, altitude and forest cover are the three major environmental covariates explaining the species' abundance both showing positive relationships. However, land use heterogeneity was an important variable to explain bee abundance (see Table 2), even though it's net effect on the abundance was comparably less pronounced (see Table 1). 
 
-Transferring this knowledge into a conservation context, I found that the distribution of *Eulaema nigrita* is largely driven by mean annual temperature and altitude - both factors we cannot (directly) influence. However, forest cover and land use heterogeneity may be subject to human alteration. Thus, out conservation intervention should focus on these by reducing forest cover at the sites where the bee might be a target species and by increasing the land use heterogeneity for example by adopting new, small scale farming methods with high diversity of different land treatments on small space.
+Transferring this knowledge into a conservation context, I found that the distribution of *Eulaema nigrita* is largely driven by mean annual temperature and altitude - both factors we cannot (directly) influence. However, forest cover as another major predictor of bee abundance may be subject to human alteration. Thus, a conservation intervention should focus on forest by reducing forest cover at the sites where the bee might be a target species and possibly (but to lesser extend) on increasing the land use heterogeneity for example by adopting new, small scale farming methods with high diversity of different land treatments on small space.
 
 ## 5. Code Availability
 
-Please find the code on my github page. 
+Please find the code on my [github page](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter5_GLM_Assignment.qmd). 
 
 ## 6. Questions
 
 1) **Confidence intervals**: For GLM's there seem to exist different forms of calculating/extracting CI's from the model or model predictions. Especially, the method showed in the lectures seem to yield too narrow CI's and therefore seem to be inappropriate due to issues with conversion between link and data scale. Which other methods should we use instead?
 
-2) **Effect size table**: How do I best report the effect sizes? On the link scale? And rescaled (if I fitted the model with z-transformed data, which is often recommended for more complex models)? Is there a convenient workflow for doing so ?- I implemented all this but wasn't sure if I did any mistakes in the recalculation and consequently removed this again...)
+2) **Effect size table**: How do I best report the effect sizes? On the link scale? And rescaled (if I fitted the model with z-transformed data, which is often recommended for more complex models)? Is there a convenient workflow for doing so ?- I implemented all this but wasn't sure if I did any mistakes in the recalculation and consequently removed this again...) Furthermore, I wonder why the effect size of forest is positive in my table but the relationship seems to be negative?
 
 3) **Effect of Altitude and Temperature**: There seems to be a positive and significant correlation between altitude and temperature. How should I have dealt with this issue (I decided to just ignore this here to fit the scope of this assignment)? Furthermore, I wonder how to interpret the relatonship I found for temperature and altitude - the bee increases for both, higher temperature and higher altitudes? This doesn't make a lot of biological sense. How could I resolve this? Including an interaction between altitude:temperature? 
 
 4) **Justification of candidate models**: I basically didn't justify my four candidate models at all. However, I could justify every single predictor, which would make sense in speciec distribution modelling since most species are subject to these environmental covariates. However, given the aim of this study (see motivation in the introduction), how would I best deal with the needed justification of the candidate model set?
 
-5)
+5) **Model diagnostics**: The model diagnostics of this model do not really look great (I looked at them using DHARMa) - what would be recommended to deal with this? 
+
+6) **Results section**: What model outputs do you want to be described in the results section? I find it slightly tedious to describe every single output from the effect size table if there is a table anyways (and I find scientific papers hard to read which do this)...
+
+7) **Your comments**: Do you have any comments? What should I continue doing like I did this time and what should I def change?
+
+**NB**: In case it might be easier to have a chat about these things, I'm happy to do so after the next lecture.
 
 
 
