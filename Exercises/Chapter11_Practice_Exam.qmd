@@ -171,6 +171,13 @@ plot <- plotting.data %>%
 ```
 
 
+# Task
+
+The data comes from a restoration project in Australia, where livestock grazing was removed from properties in the hopes that the Eucalyptus spp. overstorey would regenerate without active planting. Three rounds of surveys were conducted at 18 sites in winter and spring 2006 and autumn 2007. For each survey, a different set of 15 x 15 m quadrats were randomly placed across each site within 60 m of existing tree canopies. The number of quadrats per site depended on the size of the site, ranging from four at smaller sites to 11 at larger sites. The surveys focused on the number of Eucalyptus seedlings in each quadrat, and a suite of environmental and spatial variables were also recorded, including GPS location, aspect, tree canopy cover, distance to tree canopy, and position in the landscape. Ground-layer plant species composition was recorded in three 0.5 x 0.5 m sub-quadrats within each quadrat. Cover estimates were made for each species as well as bare ground, litter (dead organic material), rock and moss/lichen/soil crusts. The data also include climatic data for each GPS location. All variables are explained in the metadata-file below. 
+
+The following line will read the data (adjust the file path to where you keep the data file): `dat = read.csv("exam2023_data.csv")`
+
+
 # NOTHING (except of the code link to github) is updated yet! 
 
 # Just remove and fill in text...
