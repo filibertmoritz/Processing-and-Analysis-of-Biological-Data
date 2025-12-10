@@ -35,7 +35,7 @@ data <- data %>%
 
 
 # built formulas for first step light and nullmodel
-formulas <- list(nullmodel = formula(eucalyptus ~ (1|Property) + (1|Season)), 
+formulas <- list(nullmodel = formula(eucalyptus ~ 1 + (1|Property) + (1|Season)), 
                  SRad_Jan = formula(eucalyptus ~ SRad_Jan_scaled + (1|Property) + (1|Season)), 
                  `SRad_Jan + Euc_canopy_cover` = formula(eucalyptus ~  SRad_Jan_scaled + Euc_canopy_cover_scaled +  (1|Property) + (1|Season)))
 
