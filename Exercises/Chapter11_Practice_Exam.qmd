@@ -11,6 +11,7 @@ pandoc_args: ["--wrap=none"]
 # some preparations 
 library(tidyverse)
 library(lme4)
+library(knitr)
 select <- dplyr::select
 rename <- dplyr::rename 
 filter <- dplyr::filter
@@ -19,13 +20,18 @@ data <- read.csv('C:/Users/filib/Documents/Studium/Master/Processing and Analysi
 
 # data manipulation
 data <- data %>% drop_na() %>% 
-  mutate(eucalyptus = euc_sdlgs0_50cm + euc_sdlgs50cm.2m +euc_sdlgs.2m, # calc number of eucalyptus across all age classes
-         grass_cover = ExoticAnnualGrass_cover + NativePerennialGrass_cover + NativePerennialGraminoid_cover) %>% # calc grass cover independently of exact type
-  select(eucalyptus, Season, Property, Easting, Northing, SRad_Jan, annual_precipitation, precipitation_warmest_quarter, Distance_to_Eucalypt_canopy.m., BareGround_cover, grass_cover, Euc_canopy_cover) 
+  mutate(eucalyptus = euc_sdlgs0_50cm + euc_sdlgs50cm.2m +euc_sdlgs.2m, # calc eucalyptus
+         grass_cover = ExoticAnnualGrass_cover + NativePerennialGrass_cover + 
+           NativePerennialGraminoid_cover) %>% # calc overall grass cover
+  select(eucalyptus, Season, Property, Easting, Northing, SRad_Jan, 
+         annual_precipitation, precipitation_warmest_quarter, 
+         Distance_to_Eucalypt_canopy.m., BareGround_cover, grass_cover, 
+         Euc_canopy_cover) 
 
 # scale all numeric predictor variables and store with a scaled prefix (ChatGPT help)
 data <- data %>% 
-  mutate(across(where(is.numeric), ~ as.numeric(scale(.x)), .names = "{.col}_scaled"))
+  mutate(across(where(is.numeric), ~ as.numeric(scale(.x)), 
+                .names = "{.col}_scaled"))
 
 
 # built formulas for first step light and nullmodel
@@ -73,97 +79,198 @@ aictable <- AICcmodavg::aictab(models)
 # extract best model
 best_model <- models[[aictable[1,1]]]
 
-# model summary 
-summary(best_model)
+# get summary of the model
+s <- summary(best_model)
+s
+
+rownames(s$coefficients)
+
+# get effect sizes 
+library(broom.mixed)
+# tidy(best_model, effects = "fixed", conf.int = TRUE, exponentiate = TRUE) # shortcut using the broom mixed package
+effect.sizes <- tibble(Parameters =  str_remove(rownames(s$coefficients), 
+                                                pattern = '\\_scaled') ,
+       `Parameter estimates` = exp(s$coefficients[,1]), 
+       `2.5% confidence level` = exp(s$coefficients[,1]) - exp(s$coefficients[,2]), 
+       `97.5% confidence level` = exp(s$coefficients[,1]) + exp(s$coefficients[,2]),
+       `P-value` = s$coefficients[,4]) %>% 
+   mutate(across(c('Parameter estimates', '2.5% confidence level',
+                   '97.5% confidence level', 'P-value'), ~ round(.x, 2)))
+effect.sizes.pretty <- effect.sizes %>%
+  kable()
+
+
+# produce marginal effect plots by predicting for one variable while holing others constant
+n = 1000
+make.seq <- function(x, n = 1000) { # define a function to create a seq of data
+  seq(min(x, na.rm = TRUE), max(x, na.rm = TRUE), length.out = n)
+}
+
+new.data <- data.frame(SRad_Jan_scaled = make.seq(data$SRad_Jan_scaled,n = n), 
+                       SRad_Jan = make.seq(data$SRad_Jan ,n = n), 
+                       Euc_canopy_cover_scaled =  make.seq(data$Euc_canopy_cover_scaled,
+                                                      n = n), 
+                       Euc_canopy_cover = make.seq(data$Euc_canopy_cover,n = n), 
+                       Distance_to_Eucalypt_canopy.m._scaled = make.seq(data$Distance_to_Eucalypt_canopy.m._scaled, n = n), 
+                       Distance_to_Eucalypt_canopy.m. = make.seq(data$Distance_to_Eucalypt_canopy.m., n = n), 
+                       BareGround_cover_scaled = make.seq(data$BareGround_cover_scaled, n = n), 
+                       BareGround_cover = make.seq(data$BareGround_cover, n = n))
+
+predictors <- names(new.data)[grep('scaled', x = names(new.data))]
+predictors <- predictors[!grepl('effort.scaled', x = predictors)] # remove effort
+
+plotting.data <- data.frame(predictor = NULL, 
+                            predictor.scaled = NULL, 
+                            pred = NULL)
+
+
+for(p in predictors){
+  nd <- new.data %>% mutate(across(.cols = !all_of(p), ~0))
+  pred <- predict(best_model, newdata = nd , se.fit = T, re.form = NA)
+  
+  dat <- data.frame(predictor = str_remove(p, pattern = '\\_scaled'), 
+                     predictor.unscaled = 
+                      new.data[[str_remove(p, pattern = '\\_scaled')]],
+                    predictor.scaled = new.data[[p]], 
+                    pred = exp(pred$fit), 
+                    pred.se = exp(pred$se.fit), 
+                    pred.upper = exp(pred$fit + pred$se.fit*1.96),
+                    pred.lower = exp(pred$fit - pred$se.fit*1.96))
+  
+  plotting.data <- bind_rows(plotting.data, dat)
+  
+}
+
+
+# plot the marginal effects 
+plot <- plotting.data %>% 
+  mutate(predictor = if_else(predictor == 'land.use','land use', predictor)) %>% 
+  ggplot() + 
+  geom_line(mapping = aes(y = pred, x = predictor.unscaled, col = predictor),
+            lwd = 1.2) + 
+  geom_ribbon(mapping = aes(ymin = pred.lower, ymax = pred.upper, 
+                            x = predictor.unscaled, fill = predictor), 
+              alpha = 0.4) + 
+#   scale_fill_discrete(name= 'Units of the Predictors', 
+#                       labels =  c('altitude in m asl', 
+#                                    'forest in percent per plot', 
+#                                    'land use heterogenity as Shannon-diversity
+# of local land-use classes', 
+#                                    'mean annual temperature in degree C')) +
+#   scale_colour_discrete(name= 'Units of the Predictors', 
+#                         labels = c('altitude in m asl', 
+#                                    'forest in percent per plot', 
+#                                    'land use heterogenity as Shannon-diversity
+# of local land-use classes', 
+#                                    'mean annual temperature in degree C')) +
+  facet_wrap(~predictor, scales = 'free_x') +
+  labs(x = 'Predictor (for unit see legend)', y ='Predicted Eucalyptus Abundance') +
+  theme_bw(base_size = 10) +
+  theme(legend.position = 'right')
 
 ```
 
-# Exercise 1
 
-aw (on paper) the path diagram corresponding to this model, and add the estimated path coefficients, including the (Pearson) correlations (function cor in R) between the exogeneous (predictor) variables. We can calculate the unexplained variance (“U”) in the response as √(1 − r2) (which places it on the standardized [correlation] scale like the path coefficients). Interpret the results.
+# NOTHING (except of the code link to github) is updated yet! 
 
-In this model we can calculate the total (net) effect of snow cover on the abundance of Carex bigelowii by summing the direct effect and the effects arising through correlations with other variables
+# Just remove and fill in text...
 
-```{r}
-summary(m1) # for getting the coefficients 
-cor(plants$soil_moist, plants$min_T_winter, "pairwise") # to get the pairwise correlations
-cor(plants$snow, plants$soil_moist, "pairwise")
-cor(plants$min_T_winter, plants$soil_moist, "pairwise")
 
-sqrt(1-summary(m1)$r.squared) # get unexplained variance on the standardised correlation scale
 
+
+
+
+
+# Task
+
+The following dataset includes the abundance of the bee species Eulaema nigrita in the Brazilian Atlantic forest, and a number of potential predictor variables including climate (mean annual temperature and precipitation, temperature and precipitation seasonality) and land use (proportion forest cover and land use heterogeneity defined as the Shannon diversity (−Σipilnpi) of local land-use classes). The climate data from the Worldclim dataset are much used in ecological studies. The mean annual temperature (MAT) is given in degrees Celsius times 10, the annual precipitation in mm, the temperature seasonality (Tseason) as 100 times the standard deviation of the monthly temperature, and the precipitation seasonality (Pseason) as the CV of monthly precipitation (given as a percent, i.e. times 100). Why is the temperature seasonality measured as a standard deviation and the precipitation as a CV? The effort variable in the log number of hours of sampling, and the method variable indicates whether the collecting was done with hand nets, traps, or a combination of both. Use a GLM to build a model explaining the distribution patterns of Eulaema nigrita. Interpret the results and produce nice tables and figures.
+
+# 1. Introduction 
+
+Bees provide important ecosystem services like pollination and are therefore crucial for ecosystem functioning. Nevertheless, insect and bee populations have been reported to decrease drastically for decades. Thus, effective conservation interventions such as ecosystem restoration are needed. However, for such conservation action by ecosystem restoration a detailled understanding of the bee species' habitat preferences is crucial. 
+
+Here, I employed abundance monitoring data to explore the habitat preferences of the Bee species *Eulaema nigrita* home to the Brazilian Atlantic Forest and therefore contribute to an improved ecological understanding of the species needed for upcoming conservation action.
+
+# 2. Methods 
+
+To better understand the habitat preferences of *Eulaema nigrita*, I analysed bee monitoring data in a generalised linear mixed effects model (GLMM) framework. 
+
+In more detail, abundance data of *Eulaema nigrita* as independent variable was modeled using a GLMM from the poisson family with a log-link function. Four different dependent variables were utilised to specify environment-abundance relationship: 
+
+  1) percent of forest cover per plot;
+  2) altitude in m above sea level (asl); 
+  3) land use heterogeneity, defined as Shannon diversity of the local land use classes; and
+  4) mean annual temperature in degree Celsius;
+  
+  Furthermore, I considered information on the monitoring method (nets, traps or both) and the monitoring effort (measures as time spent in each plot, transferred by taking the log) in the random and fixed effects, respectively, in all fitted models. Thereby, I accounted for difference efficiencies in the applied monitoring methods and varying monitoring efforts, respectively, and reduced the bias due to imperfect detection.
+
+Overall, I fitted five candidate models where all four environmental predictors where added step wise in an additive manner (as ordered above) to built up from simple to more complex models. Each of these candidate models was compared using the AICc (small sample size corrected Aikaile Information Criterion - approaches the classical AIC for large sample sizes and is therefore generally recommended over the AIC) to find the most parsimonious model. However, I retained the correction for the sampling process (survey method and effort, as random and fixed effect) for all candidate models since I assumed both variables to be important for explaining the observation process in all scenarios. Furthermore, I added one reference model where abundance was only explained by sampling method and effort to capture the case that none of my environmental variables is important in explaining the bees abundance.
+
+Afterwards, I employed the (set of) model(s) for inference to extract information on the abundance-environmental covariate relationship as a) effect sizes and b) marginal effect plots of each independent variable found to be important.
+
+All analysis were performed in R (R Core Team, 2025) and models were fitted using the lme4 package (Bates et. al, 2015). 
+
+# 3. Results 
+
+```{r, include=F}
+mean.abund <- mean(predict(best.model, type = 'response'))
+ci.abund <- quantile(predict(best.model, type = 'response'), c(0.05, 0.975))
 ```
 
-In the second model, there is (as expected) a strong positive effect of snow cover on minimum winter soil temperature, and in turn a positive effect of winter soil temperature on Carex bigelowii. Thus, under this model, we have strong support for the hypothesized causal links from snow cover to Carex abundance.
+I analysed `{r} dim(data)[1]` abundance observations *Eulaema nigrita* from `{r} length(unique(data$study.area))` survey sites in a poisson GLMM-framework to better understand the habitat preferences of the bee species. 
 
-# Exercise 2
+Overall, at each survey site a mean of `{r} mean.abund` (CI: `{r} ci.abund[1]`, `{r} ci.abund[2]`) bees of the species *Eulaema nigrita* were present after correcting for survey method and effort. Thus, the estimated bee abundances differed considerably between survey sites, which can be attributed to habitat differences, as explained by the best, most parsimonious model: Temperature and altitude were the two most important environmental conditions affecting *Eulaema nigrita* abundance, with effect sizes of 1.33 (CI:0.32, 2.34) and 1.23 (CI: 0.21, 2.25). Therefore, bee abundance increased considerably from sea level to `{r} max(data$altitude, na.rm = T)` m above sea level from `{r} plotting.data %>% filter(predictor == 'altitude') %>% slice_min(pred) %>% pull(pred) %>% round(digits = 2)` (CI: 100.89, 111.56) to `{r} plotting.data %>% filter(predictor == 'altitude') %>% slice_max(pred) %>% pull(pred) %>% round(digits = 2)`  (CI: 27.95, 32.20) bees. Likewise, an increase in the mean annual temperature from 20 to 21 degrees Celsius resulted in an abundance increase from 50.86 (CI: 48.12, ) to 57.74 (CI: 54.97, 60.65). Furthermore, percentage of forest cover and to lesser extend land use heterogeneity were important in explaining *Eulaema nigrita* abundance (see Table 2) even though the change in bee abundance per unit standard deviation of both predictors was less considerable. However, there was considerable uncertainty in the estimates of the effect sizes (see Table 1).
 
-Draw the path diagram and interpret the direct and indirect effects of snow cover on Carex abundance.
-
-```{r}
-summary(m2a) 
-summary(m2b) 
-summary(m2c)
-
-
+```{r, echo = F}
+#| tbl-cap: "Effect sizes of the model parameters of the single best model detected by AICc (see Table 2). Note that all estaimtes are back-transformed from the link to the natural scale. However, all estimates are in units of standard deviations."
+effect.sizes.pretty
 ```
 
-# Structural equation modelling
+All inference was solely based on the single best model since I found overwhelming support for this full model indicated by the delta AICc and AICc weights, for more details see Table 2. No model averaging with other candidate models was needed (see Table 2).
 
-Structural equation modelling is a further development that offers greater flexibility compared to traditional path analysis. Traditional structural equation models are estimated globally (in one go) based on a covariance matrix including all the candidate variables. An alternative approach is to build the SEM piecewise as a series of models fitted independently (“local estimation”) and then combined. Below we fit our second candidate model using the second approach and the piecewiseSEM package. 
 
-```{r, message=F}
-library('piecewiseSEM')
-
-# fit SEM
-m2 <- psem(lm(soil_moist~snow, data=plants),
-          lm(min_T_winter~snow, data=plants),
-          lm(Carex.bigelowii~min_T_winter+soil_moist, data=plants),
-          data=plants)
-
-summary(m2)
+```{r, echo = F, fig.}
+#| tbl-cap: "Model selection table for all four fitted candidate models ordered by minimal AICc. AICc is the small sample size corrected Aikaike Information criterion."
+aictable_pretty
 ```
 
-Beyond simply fitting the component models, the piecewiseSEM package implements tests of so-called directed separation (“d-separation”), which is a test for conditional independence of variables. Here, the key test is if Carex abundance is really conditionally independent of snow cover, i.e. after we have accounted for winter soil temperature and growing-season soil moisture. The interpretation of these tests is different from what we are used to for normal models. In this case the null hypothesis is that our model represents the data well, and that adding an additional link (such as the one from snow cover directly to Carex abundance) would not improve the model sufficiently to be favoured. Therefore, statistical support (a low p-value or support in AIC comparison) therefore indicates bad model fit, while lack of statistical support (e.g. a higher p-value) indicate decent fit to the data. However, as always, we need to interpret any result in light of the parameter estimates.
 
-Note that for a SEM containing multiple of these “independence claims”, the piecewiseSEM package also provides a hypothesis test for the entire model, again with a high p-value indicating a decent fit to the data. This test is based on comparing the likelihood of the current model to a saturated model including the missing paths. The output of the current model includes a test of directed separation for the relationship between winter temperature and soil moisture, which was not our main interest in this case, and we would like to treat this as an untested correlation (corresponding to double-headed arrows in our traditional path analysis above). We can achieve this through the somewhat exotic %~~% operator within the psem function.
+# 4. Discussion and Conclusion
 
-```{r}
-m2b = psem(lm(soil_moist~snow, data=plants),
-           lm(min_T_winter~snow, data=plants),
-           lm(Carex.bigelowii~min_T_winter+soil_moist, data=plants),
-           min_T_winter %~~% soil_moist,
-           data=plants)
-summary(m2b)
+I used a GLMM modelling framework to better understand the habitat requirements of the Brazilian bee species *Eulaema nigrita*. 
+
+```{r, echo = F}
+#| fig-width: 10
+#| fig-height: 6
+#| fig.align: center
+#| fig-cap: "Effect of environmental covariates on predicted Eulaema nigrita abundance. The Abundance was explained using a GLMM framework where only the influence of the fixed effects included as environmental covariates are shown, but fixed and random effects were used to correct for sampling effort and method, respectively."
+
+plot
 ```
 
-# AIC model selection for structural equation models
+I found that mean annual temperature, and altitude were the two major environmental variables explaining the species' abundance both showing positive relationships. However, percentage of forest cover and land use heterogeneity were important variables to explain bee abundance (see Table 2) too, even though it's net effect on the abundance was comparably less pronounced (see Table 1) and confounded by significant uncertainty. 
 
-The AIC values reported by the model summary is the total AIC of the model, obtained by summing the AIC values of the component models (log likelihoods and thus AIC values are additive). We can use this to compare our chosen model to a null model (with nothing affecting nothing), or an alternative model with different sets of paths. As an example, we formulate a third alternative model with different paths missing and compare it to our model 2 using AIC. Specifically, we omit the arrow from soil moisture to Carex abundance.
+Transferring this knowledge into a conservation context, I found that the distribution of *Eulaema nigrita* is largely driven by mean annual temperature and altitude - both factors we cannot (directly) influence. However, forest cover as another major predictor of bee abundance may be subject to human alteration. Thus, a conservation intervention should focus on forest by reducing forest cover at the sites where the bee might be a target species and possibly (but to lesser extend) on increasing the land use heterogeneity for example by adopting new, small scale farming methods with high diversity of different land treatments on small space.
 
-```{r}
-m3 = psem(lm(soil_moist~snow, data=plants), 
-          lm(min_T_winter~snow, data=plants), 
-          lm(Carex.bigelowii~min_T_winter, data=plants),
-          min_T_winter %~~% soil_moist,
-          data=plants)
-summary(m3)
-```
+# 5. Code Availability
 
-After fitting the two hypothesis, the models can be compared using AIC. 
+Please find the code on my [github page](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter11_Practice_Exam.qmd). 
 
-```{r}
-AIC(m2b, m3)
-```
+# 6. Questions
 
-The third model seems to be the best. 
+1) **Confidence intervals**: For GLM's there seem to exist different forms of calculating/extracting CI's from the model or model predictions. Especially, the method showed in the lectures seem to yield too narrow CI's and therefore seem to be inappropriate due to issues with conversion between link and data scale. Which other methods should we use instead?
 
-One nice feature of the piecewiceSEM package is that is allows the component models to be for example GLM’s or mixed models. This offers greater flexibility for including non-Gaussian variables, and for modelling structure in the data (e.g. non-independence of data points).
+2) **Effect size table**: How do I best report the effect sizes? On the link scale? Or rescaled (if I fitted the model with z-transformed data, which is often recommended for more complex models)? Is there a convenient workflow for doing so ?- I implemented all this but wasn't sure if I did any mistakes in the recalculation and consequently removed this again...) Furthermore, I wonder why the effect size of forest is positive in my table but the relationship seems to be negative?
 
-# Exercise 3:
+3) **Effect of Altitude and Temperature**: There seems to be a positive and significant correlation between altitude and temperature. How should I have dealt with this issue (I decided to just ignore this here to fit the scope of this assignment)? Furthermore, I wonder how to interpret the relatonship I found for temperature and altitude - the bee increases for both, higher temperature and higher altitudes? This doesn't make a lot of biological sense. How could I resolve this? Including an interaction between altitude:temperature? 
 
-Repeat the analyses above for Thalictrum alpinum instead of Carex.
+4) **Justification of candidate models**: I basically didn't justify my four candidate models at all. However, I could justify every single predictor, which would make sense in speciec distribution modelling since most species are subject to these environmental covariates. However, given the aim of this study (see motivation in the introduction), how would I best deal with the needed justification of the candidate model set?
 
-# Exercise 4:
+5) **Model diagnostics**: The model diagnostics of this model do not really look great (I looked at them using DHARMa) - what would be recommended to deal with this? 
 
-Can you think of other potential models that can be tested? Are there other important environ- mental variables? Start by drawing the competing models as directed graphs (on paper). Fit and compare the models, and interpret the results.
+6) **Results section**: What model outputs do you want to be described in the results section? I find it slightly tedious to describe every single output from the effect size table if there is a table anyways (and I find scientific papers hard to read which do this)...
+
+7) **Your comments**: Do you have any comments? What should I continue doing like I did this time and what should I def change?
+
+**NB**: In case it might be easier to have a chat about these things, I'm happy to do so after the next lecture.
+
