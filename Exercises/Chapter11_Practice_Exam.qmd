@@ -1,24 +1,47 @@
 ---
-title: "Exercise 11: Practice Exam"
-author: 'Fausto, Pauline Mergel and Filibert Heim'
+title: "Midterm BIOS15"
+author: 'Fausto René Dal Monte, Pauline Mergel and Filibert Heim'
 format: pdf
 date: "`r Sys.Date()`"
 fig_caption: yes
 pandoc_args: ["--wrap=none"]
+editor: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r, message=F, include=F}
-# some preparations 
+### PACKAGES
 library(tidyverse)
-library(lme4)
+library(glmmTMB)
 library(knitr)
+library(broom.mixed)
+library(kableExtra)
+library(stringr)
 select <- dplyr::select
 rename <- dplyr::rename 
 filter <- dplyr::filter
 
-data <- read.csv('C:/Users/filib/Documents/Studium/Master/Processing and Analysis of Biological Data/data/exam2023_data-2.csv')
+
+
+
+### DATA
+# data <- read.csv('C:/Users/filib/Documents/Studium/Master/Processing and Analysis of Biological Data/data/exam2023_data-2.csv')
+data <-  read.csv(file="datasets/eucalyptus.csv")
 
 # data manipulation
+data <- as.data.frame(data)
+
+# Transform characters to factors
+data <- data %>%
+  mutate(across(c(Date, Season, Property, Aspect, Landscape.position), as.factor))
+
+range(data$euc_sdlgs.2m)
+sum(data$euc_sdlgs.2m == 0, na.rm = TRUE)
+length(data$euc_sdlgs.2m)
+sum(data$euc_sdlgs.2m == 0, na.rm = TRUE)/length(data$euc_sdlgs.2m) # 97% of quadrats with zero seedlings >2m
+
+
 data <- data %>% drop_na() %>% 
   mutate(eucalyptus = euc_sdlgs0_50cm + euc_sdlgs50cm.2m +euc_sdlgs.2m, # calc eucalyptus
          grass_cover = ExoticAnnualGrass_cover + NativePerennialGrass_cover + 
@@ -26,98 +49,362 @@ data <- data %>% drop_na() %>%
   select(eucalyptus, Season, Property, Easting, Northing, SRad_Jan, 
          annual_precipitation, precipitation_warmest_quarter, 
          Distance_to_Eucalypt_canopy.m., BareGround_cover, grass_cover, 
-         Euc_canopy_cover) 
+         Euc_canopy_cover, Th_ppm, U_ppm, K_perc) 
 
 # scale all numeric predictor variables and store with a scaled prefix (ChatGPT help)
-data <- data %>% 
-  mutate(across(where(is.numeric), ~ as.numeric(scale(.x)), 
+data <- data %>%
+  mutate(across(where(is.numeric), ~ as.numeric(scale(.x)),
                 .names = "{.col}_scaled"))
 
 
-# built formulas for first step light and nullmodel
-formulas <- list(nullmodel = formula(eucalyptus ~ 1 + (1|Property) + (1|Season)), 
-                 SRad_Jan = formula(eucalyptus ~ SRad_Jan_scaled + (1|Property) + (1|Season)), 
-                 `SRad_Jan + Euc_canopy_cover` = formula(eucalyptus ~  SRad_Jan_scaled + Euc_canopy_cover_scaled +  (1|Property) + (1|Season)))
+
+
+### MODEL SELECTION
+# 1) Random effects models
+formulas <- list(null = formula(eucalyptus ~ 1),
+                 null.property = formula(eucalyptus ~ 1 + (1|Property)),
+                 null.propertyseason = formula(eucalyptus ~ 1 + (1|Property) + (1|Season)))
+                 
 
 # fit models for first step light 
 models <- list()
 for(f in names(formulas)){
-  models[[f]] <- glmer(formula = formulas[[f]], family = poisson(link = 'log'), 
-                       data = data) 
+  models[[f]] <- glmmTMB(formula = formulas[[f]], 
+                         family = nbinom1(link = 'log'), 
+                          data = data) 
 }
 
 # compare models using AIC
 aictable <- AICcmodavg::aictab(models) 
 
-# make formulas for second step for water continuing with the single best model
-formulas <- c(formulas, list(`SRad_Jan + Euc_canopy_cover + annual_precipitation` = formula(eucalyptus ~ SRad_Jan_scaled + Euc_canopy_cover_scaled + annual_precipitation_scaled + (1|Property) + (1|Season)), 
-                             `SRad_Jan + Euc_canopy_cover + annual_precipitation + precipitation_warmest_quarter` = formula(eucalyptus ~ SRad_Jan_scaled + Euc_canopy_cover_scaled + annual_precipitation_scaled + precipitation_warmest_quarter_scaled + (1|Property) + (1|Season))))
+
+# 2) Built formulas for first step light and nullmodel
+formulas <- c(formulas, list(SRad_Jan = formula(eucalyptus ~ SRad_Jan_scaled + (1|Property)), 
+                 Euc_canopy_cover = formula(eucalyptus ~ Euc_canopy_cover_scaled + (1|Property)),
+                 `SRad_Jan + Euc_canopy_cover` = formula(eucalyptus ~  SRad_Jan_scaled + Euc_canopy_cover_scaled +  (1|Property))))
+
+# fit models for first step light 
+for(f in names(formulas)){
+  models[[f]] <- glmmTMB(formula = formulas[[f]], 
+                         family = nbinom1(link = 'log'), 
+                          data = data) 
+}
+
+# compare models using AIC
+aictable <- AICcmodavg::aictab(models)
+
+
+# 3) Make formulas for second step for water continuing with the single best model
+formulas <- c(formulas, list(annual_precipitation = formula(eucalyptus ~ annual_precipitation_scaled + (1|Property)),
+                 precip_warmest_quarter = formula(eucalyptus ~ precipitation_warmest_quarter_scaled + (1|Property)), 
+                  `annual_precipitation + precipitation_warmest_quarter` = formula(eucalyptus ~ annual_precipitation_scaled + precipitation_warmest_quarter_scaled + (1|Property))))
 
 # fit models for second step for water
 for(f in names(formulas)){
-  models[[f]] <- glmer(formula = formulas[[f]], family = poisson(link = 'log'), 
+  models[[f]] <- glmmTMB(formula = formulas[[f]], family = nbinom1(link = 'log'), 
                        data = data) 
 }
 
 # get best model using AIC
 aictable <- AICcmodavg::aictab(models) 
 
-# create formulas for second step for establishment
-formulas <- c(formulas, list(`SRad_Jan + Euc_canopy_cover + Distance_to_Eucalypt_canopy.m.` = formula(eucalyptus ~ SRad_Jan_scaled + Euc_canopy_cover_scaled + Distance_to_Eucalypt_canopy.m._scaled + (1|Property) + (1|Season)),
-                             `SRad_Jan + Euc_canopy_cover + Distance_to_Eucalypt_canopy.m. + BareGround_cover` = formula(eucalyptus ~ SRad_Jan_scaled + Euc_canopy_cover_scaled + Distance_to_Eucalypt_canopy.m._scaled + BareGround_cover_scaled + (1|Property) + (1|Season)), 
-                             `SRad_Jan + Euc_canopy_cover + Distance_to_Eucalypt_canopy.m. + BareGround_cover + grass_cover` = formula(eucalyptus ~ SRad_Jan_scaled + Euc_canopy_cover_scaled + Distance_to_Eucalypt_canopy.m._scaled + BareGround_cover_scaled + grass_cover_scaled + (1|Property) + (1|Season))))
+
+# 4) Create formulas for next step, adding seed establishment
+formulas <- c(formulas, list(Distance_to_Eucalypt_canopy.m. = formula(eucalyptus ~ Distance_to_Eucalypt_canopy.m._scaled + (1|Property)),
+                             `Distance_to_Eucalypt_canopy.m. + BareGround_cover` = formula(eucalyptus ~ Distance_to_Eucalypt_canopy.m._scaled + BareGround_cover_scaled + (1|Property)), 
+                             `Distance_to_Eucalypt_canopy.m. + BareGround_cover + grass_cover` = formula(eucalyptus ~ Distance_to_Eucalypt_canopy.m._scaled + BareGround_cover_scaled + grass_cover_scaled + (1|Property))))
 
 # fit models for third step for possibilities of establishment
 for(f in names(formulas)){
-  models[[f]] <- glmer(formula = formulas[[f]], family = poisson(link = 'log'), 
+  models[[f]] <- glmmTMB(formula = formulas[[f]], family = nbinom1(link = 'log'), 
                        data = data) 
 }
 
 # get best model using AIC
 aictable <- AICcmodavg::aictab(models) 
+# summary(models[[11]]) # best model
+
+
+# 5) Final step, adding minerals Th + U + K and going forward with best model
+formulas <- c(formulas, list(`Distance_to_Eucalypt_canopy.m. + Th_ppm` = formula(eucalyptus ~ Distance_to_Eucalypt_canopy.m._scaled + Th_ppm_scaled + (1|Property)), 
+                             `Distance_to_Eucalypt_canopy.m. + Th_ppm + U_ppm` = formula(eucalyptus ~ Distance_to_Eucalypt_canopy.m._scaled + Th_ppm_scaled + U_ppm_scaled + (1|Property)), 
+                             `Distance_to_Eucalypt_canopy.m. + Th_ppm + U_ppm + K_perc` = formula(eucalyptus ~ Distance_to_Eucalypt_canopy.m._scaled + Th_ppm_scaled + U_ppm_scaled + K_perc_scaled + (1|Property))))
+
+# fit models for third step for possibilities of establishment
+for(f in names(formulas)){
+  models[[f]] <- glmmTMB(formula = formulas[[f]], family = nbinom1(link = 'log'), 
+                       data = data) 
+}
+
+# get best model using AIC
+aictable <- AICcmodavg::aictab(models)
+
+
+
+
+### MODEL SELECTION
+# AICc table for all models: 
+aictable_pretty <- aictable %>% 
+  tibble() %>%
+  rename(`Number of model parameters` = K, `Delta AICc` = Delta_AICc, `AICc weights` = AICcWt, Model = Modnames) %>% 
+  mutate(across(c(AICc, `Delta AICc`, `AICc weights`), ~ round(.x, 2))) %>% 
+  select(-LL, -Cum.Wt) %>% 
+  kable()
 
 # extract best model
 best_model <- models[[aictable[1,1]]]
 
+
+
+
+### OUTPUT OF BEST MODEL + SUMMARY STATISTICS
 # get summary of the model
 s <- summary(best_model)
 s
 
-rownames(s$coefficients)
+hist(data$eucalyptus)
+mean.eu <- mean(data$eucalyptus)
+var.eu <- var(data$eucalyptus)
+var.eu/mean.eu # => negative binomial NOT poisson
 
-# get effect sizes 
-library(broom.mixed)
-# tidy(best_model, effects = "fixed", conf.int = TRUE, exponentiate = TRUE) # shortcut using the broom mixed package
-effect.sizes <- tibble(Parameters =  str_remove(rownames(s$coefficients), 
-                                                pattern = '\\_scaled') ,
-       `Parameter estimates` = exp(s$coefficients[,1]), 
-       `2.5% confidence level` = exp(s$coefficients[,1]) - exp(s$coefficients[,2]), 
-       `97.5% confidence level` = exp(s$coefficients[,1]) + exp(s$coefficients[,2]),
-       `P-value` = s$coefficients[,4]) %>% 
-   mutate(across(c('Parameter estimates', '2.5% confidence level',
-                   '97.5% confidence level', 'P-value'), ~ round(.x, 2)))
-effect.sizes.pretty <- effect.sizes %>%
-  kable()
+# response variable eucalyptus unscaled, fixed effect scaled (mean 0, SD 1), random effects factors
+s$coefficients
+#varmonggroups, varwithingroups
+VarAmongGroups = attr(VarCorr(best_model)$cond$Property, "stddev")^2
+VarWithinGroups = attr(VarCorr(best_model)$cond, "sc")^2
+# calc the variance explained by groups (in %):
+CV2_Among = VarAmongGroups/mean.eu^2
+CV2_Within = VarWithinGroups/mean.eu^2
+CV2_Total = CV2_Among + CV2_Within
+df = data.frame(Mean = mean(data$eucalyptus), SD = sd(data$eucalyptus),
+                Among = VarAmongGroups/(VarAmongGroups+VarWithinGroups)*100,
+                Within = VarWithinGroups/(VarAmongGroups+VarWithinGroups)*100,
+                CV2_Among, CV2_Within, CV2_Total)
+df = apply(df, MARGIN=2, FUN=round, digits=2)
+df
+# SD of Eucalyptus (total count seedlings) is much higher than the mean (skewed? overdispersed?) => zeroes? account for it
+# most variation is within groups and almost no variation between different groups
+# grouping factor (Property) explains very little, still OK to include
+# very little of the variance is due to differences between properties (0.46%)
+# Almost all variation is at the within-property (plot-level) scale (99.54%)
+# CV2_total = 0.13 =>  low coefficient of variation on the log scale 
+# implies most heterogeneity is explained by the predictors (and not the random effect)
+# SO does it make sense to keep it in then??
+
+s
+# Estimated variance
+mean.eu*14.1
+# Similar to:
+var.eu/mean.eu
+# Yes = model choice with neg bin was good
+
+# FIXED EFFECTS
+# backtransform
+int <- round(exp(s$coefficients$cond[1,1]),2)  # intercept
+# => baseline density doesn’t differ from zero on the log scale after scaling?
+
+dist <- round(exp(s$coefficients$cond[2,1]), 2)  # distance to eucalyptus canopy cover
+# => 1 SD increase in distance to eucalyptus reduces predicted eucalyptus counts by ~37%
+
+th <- round(exp(s$coefficients$cond[3,1]),2)  # Th concentration in ppm
+# => 1 SD increase in Th increases predicted eucalyptus counts by ~75%
+
+# S.E. cannot be correctly backtransformed manually...
+# https://vsni.co.uk/back-transform-standard-error/
+coefs <- summary(best_model)$coefficients$cond
+# Back-transform
+beta <- coefs[, "Estimate"]
+se_log <- coefs[, "Std. Error"]
+# Back-transformed (original scale = still scaled to mean 0, SD 1)
+beta_orig <- exp(beta)
+se_orig <- beta_orig * se_log
+# Put into df:
+out <- data.frame(beta_orig, se_orig)
+out <- round(out,2)
+out
+# Backscale to original units
+  # dist to eucalyptus
+out$beta_orig[2] * sd(data$Distance_to_Eucalypt_canopy.m.) + mean(data$Distance_to_Eucalypt_canopy.m.)
+out$beta_orig[2] * sd(data$Distance_to_Eucalypt_canopy.m.)
+  # Thorium
+out$beta_orig[3] * sd(data$Th_ppm) + mean(data$Th_ppm)
+out$beta_orig[3] * sd(data$Th_ppm)
 
 
+# RANDOM EFFECTS (PROPERTY)
+summary(best_model) # two formulas below don't work on "s", the summary of best_model..
+VarCorr(best_model)$cond$Property[1, 1] # variance
+attr(VarCorr(best_model)$cond$Property, "stddev") # S.D.
+# random effect variance = 0.9188
+# Dispersion parameter (theta)
+theta <- sigma(best_model)  # residual SD or dispersion parameter
+theta <- round(theta,2)
+# BUT: the residual (dispersion) variance of the model is MUCH higher = 14.1
+# => Random effects explain a small fraction of the total
+# HOWEVER, if we take property out, model AIC becomes much worse
+# SO: Eucalyptus counts are driven mainly by local plot-level factors, not property-level differences. Trees become less abundant as you move farther from existing eucalyptus canopy, and they are more abundant in areas with higher Th concentration. The variability between properties is small compared with the large within-property variation driven by these predictors and overdispersion.
+```
+
+```{r message=FALSE, include=F, eval=FALSE}
+### TABLE 1: AIC
+names(models)
+names(models) <- c(
+  "Null model",
+  "1 + (1|Property)",
+  "1 + (1|Property) + (1|Season)",
+  "RadiationJan + (1|Property)",
+  "CanopyCover + (1|Property)",
+  "RadiationJan + CanopyCover + (1|Property)",
+  "AnnualPrec + (1|Property)",
+  "WarmestQuarterPrec + (1|Property)",
+  "AnnualPrec + WarmestQuarterPrec + (1|Property)",
+  "DistanceCanopy + (1|Property)",
+  "DistanceCanopy + BareGroundCover + (1|Property)",
+  "DistanceCanopy + BareGroundCover + GrassCover + (1|Property)",
+  "DistanceCanopy + ThoriumConc + (1|Property)",
+  "DistanceCanopy + ThoriumConc + UraniumConc + (1|Property)",
+  "DistanceCanopy + ThoriumConc + UraniumConc + PotassiumConc + (1|Property)"
+)
+
+aictable <- AICcmodavg::aictab(models)
+
+aictable_pretty <- aictable %>% 
+  tibble() %>%
+  rename(`Number of<br>model parameters` = K, `Delta AICc` = Delta_AICc, `AICc<br>weights` = AICcWt, `Candidate Model` = Modnames) %>% 
+  mutate(across(c(AICc, `Delta AICc`, `AICc<br>weights`, `ModelLik`), ~ round(.x, 2))) %>% 
+  select(-LL, -Cum.Wt)%>%
+  kable("html", escape = FALSE)%>%
+  column_spec(1, extra_css = "padding-left: 5px; padding-right: 5; min-width: 100px;") %>%
+  column_spec(2, extra_css = "padding-left: 5px; padding-right: 5; min-width: 100px;") %>%
+  column_spec(3, extra_css = "padding-left: 5px; padding-right: 5; min-width: 100px;") %>%
+  column_spec(4, extra_css = "padding-left: 5px; padding-right: 5; min-width: 100px;") %>%
+  column_spec(5, extra_css = "padding-left: 5px; padding-right: 5; min-width: 100px;") %>%
+  column_spec(6, extra_css = "padding-left: 5px; padding-right: 5; min-width: 100px;") %>%
+  row_spec(1, extra_css = "border-top: 1px solid black;") %>%
+  row_spec(nrow(aictable), extra_css = "border-bottom: 1px solid black;") %>%
+  footnote(
+    general = "<span style='font-size:0.8em;'>Note: DistanceCanopy = Distance from nearest Eucalyptus canopy (m); ThoriumConc = Concentration of thorium in the soil (ppm); UraniumConc = Concentration of uranium in the soil (ppm); PotassiumConc = Concentration of potassium in the soil (%); BareGroundCover = Percentage of bare ground cover (%); GrassCover = Percentage of grass cover (%); CanopyCover = Percentage of cover provided by Eucalyptus canopy (%); RadiationJan = Incoming solar radiation in January (WH/m2); WarmestQuarterPrec = Total precipitation in the warmest quarter of the year (mm); AnnualPrec = Total annual precipitation (mm); Random effects were Property  (i.e Site) and Season.</span>",
+    general_title = "",
+    footnote_as_chunk = TRUE,
+    escape = FALSE
+  )
+
+# Table 1 Model selection table using Akaike information criterion corrected for small sample sizes
+aictable_pretty
+
+
+
+  
+### TABLE 2: Parameter estimates and CI
+effect.sizes <- tibble(Parameters =  str_remove(rownames(s$coefficients$cond), pattern = '\\_scaled') ,
+                       `Parameter estimates` = exp(s$coefficients$cond[,1]), 
+                       `2.5% confidence level` = exp(s$coefficients$cond[,1]) - exp(s$coefficients$cond[,2]), 
+                       `97.5% confidence level` = exp(s$coefficients$cond[,1]) + exp(s$coefficients$cond[,2]),
+                       `P-value` = s$coefficients$cond[,4]) %>%
+  mutate(across(c('Parameter estimates', '2.5% confidence level',
+                  '97.5% confidence level', 'P-value'), ~ round(.x, 2)))
+
+param_names <- c(
+  "(Intercept)" = "Intercept",
+  Distance_to_Eucalypt_canopy.m. = "Distance to nearest Eucalyptus canopy",
+  Th_ppm = "Thorium concentration")
+
+effect.sizes <- effect.sizes %>%
+  mutate(Parameters = recode(Parameters, !!!param_names))%>%
+  mutate(Group = if_else(Parameters == "Intercept", "Intercept", "Slopes")) %>%
+  mutate(Parameter_label = case_when(
+    Parameters == "Intercept" ~ "Intercept",
+    TRUE ~ paste0("     ", Parameters)))%>%
+  rename(
+    "Fixed effects<br>(intercept, slopes)" = Parameters,
+    "Estimate" = `Parameter estimates`,
+    "2.5% confidence level" = `2.5% confidence level`,
+    "97.5% confidence level" = `97.5% confidence level`,
+    "P-value" = `P-value`)
+
+effect.sizes.with.slopes <- effect.sizes %>%
+  mutate(Group = if_else(`Fixed effects<br>(intercept, slopes)` == "Intercept", "Intercept", "Slopes")) %>%
+  group_split(Group) %>%
+  {intercept <- .[[1]]
+  slopes <- .[[2]]
+  slopes_row <- tibble(
+    `Fixed effects<br>(intercept, slopes)` = "Slopes",
+    Estimate = NA_real_,
+    `2.5% confidence level` = NA_real_,
+    `97.5% confidence level` = NA_real_,
+    `P-value` = NA_real_)
+  bind_rows(intercept, slopes_row, slopes)
+  } %>%
+  mutate(`Fixed effects<br>(intercept, slopes)` = case_when(
+    `Fixed effects<br>(intercept, slopes)` %in% c("Intercept", "Slopes") ~ `Fixed effects<br>(intercept, slopes)`,
+    TRUE ~ paste0("&nbsp;&nbsp;&nbsp;&nbsp;", `Fixed effects<br>(intercept, slopes)`)))
+
+
+# Random Effect
+vc <- VarCorr(best_model)$cond
+property_var <- vc$Property["(Intercept)", "(Intercept)"]
+
+random_effects_rows <- tibble(
+  `Fixed effects<br>(intercept, slopes)` = c("Random effects", "Property (variance)"),
+  Estimate = c(NA, property_var),
+  `2.5% confidence level` = NA_real_,
+  `97.5% confidence level` = NA_real_,
+  `P-value` = NA_real_)
+
+
+effect.sizes.full <- bind_rows(
+  effect.sizes.with.slopes,
+  random_effects_rows)
+
+
+# Table
+effect.sizes.pretty <- effect.sizes.full %>%
+  select(`Fixed effects<br>(intercept, slopes)`, Estimate, `2.5% confidence level`, `97.5% confidence level`, `P-value`) %>%
+  mutate(across(c(Estimate, `2.5% confidence level`, `97.5% confidence level`, `P-value`),
+                ~ ifelse(is.na(.x), 
+                         ifelse(`Fixed effects<br>(intercept, slopes)` == "Property (variance)", "-", ""), 
+                         sprintf("%.2f", as.numeric(.x))))) %>%
+  kable("html", escape = FALSE, align = "lcccc") %>%
+  kable_styling(full_width = FALSE) %>%
+  add_header_above(c(" " = 1, "Eucalyptus abundance" = 4), bold = TRUE) %>%
+  row_spec(0, bold = TRUE, extra_css = "border-bottom: 1px solid black;") %>%
+  row_spec(nrow(effect.sizes.with.slopes) + 1, bold = TRUE) %>%
+  row_spec(1:nrow(effect.sizes.with.slopes), extra_css = "border-top: none; border-bottom: none; line-height: 0.7;") %>%
+  row_spec(1, extra_css = "border-top: 1px solid black;") %>%
+  row_spec(nrow(effect.sizes.full), extra_css = "border-bottom: 1px solid black;")%>%
+  row_spec(nrow(effect.sizes.with.slopes), extra_css = "border-bottom: 1px solid black;")%>%
+  row_spec(nrow(effect.sizes.full), extra_css = "border-top: none; border-bottom: 1px solid black; line-height: 0.7;") %>%
+  footnote(
+    general = "<span style='font-size:0.8em;'>Note: The estimated parameters of fixed
+    effects on the log scale have been exponentiated back to the original scale. Such
+    values are shown as units of standard deviations of the respective variable (z-transformation).
+    Distance to nearest Eucalyptus canopy was measured in metres, Thorium concentration in parts per
+    million (ppm). The variance estimate for the random effect is reported on the log scale.</span>",
+    general_title = "",
+    footnote_as_chunk = TRUE,
+    escape = FALSE
+  )
+
+# Table 2 Effect sizes of the final model fitted to explain Eucalyptus seedlings abundance.
+effect.sizes.pretty
+```
+
+```{r,message=F, include=F}
+### FIGURE 1
 # produce marginal effect plots by predicting for one variable while holing others constant
 n = 1000
 make.seq <- function(x, n = 1000) { # define a function to create a seq of data
   seq(min(x, na.rm = TRUE), max(x, na.rm = TRUE), length.out = n)
 }
 
-new.data <- data.frame(SRad_Jan_scaled = make.seq(data$SRad_Jan_scaled,n = n), 
-                       SRad_Jan = make.seq(data$SRad_Jan ,n = n), 
-                       Euc_canopy_cover_scaled =  make.seq(data$Euc_canopy_cover_scaled,
+new.data <- data.frame(Distance_to_Eucalypt_canopy.m._scaled = make.seq(data$Distance_to_Eucalypt_canopy.m._scaled,n = n), 
+                       Distance_to_Eucalypt_canopy.m. = make.seq(data$Distance_to_Eucalypt_canopy.m. ,n = n), 
+                       Th_ppm_scaled =  make.seq(data$Th_ppm_scaled,
                                                       n = n), 
-                       Euc_canopy_cover = make.seq(data$Euc_canopy_cover,n = n), 
-                       Distance_to_Eucalypt_canopy.m._scaled = make.seq(data$Distance_to_Eucalypt_canopy.m._scaled, n = n), 
-                       Distance_to_Eucalypt_canopy.m. = make.seq(data$Distance_to_Eucalypt_canopy.m., n = n), 
-                       BareGround_cover_scaled = make.seq(data$BareGround_cover_scaled, n = n), 
-                       BareGround_cover = make.seq(data$BareGround_cover, n = n))
+                       Th_ppm = make.seq(data$Th_ppm,n = n))
 
 predictors <- names(new.data)[grep('scaled', x = names(new.data))]
-predictors <- predictors[!grepl('effort.scaled', x = predictors)] # remove effort
+# predictors <- predictors[!grepl('effort.scaled', x = predictors)] # remove effort
 
 plotting.data <- data.frame(predictor = NULL, 
                             predictor.scaled = NULL, 
@@ -141,143 +428,225 @@ for(p in predictors){
   
 }
 
-
-# plot the marginal effects 
 plot <- plotting.data %>% 
-  mutate(predictor = if_else(predictor == 'land.use','land use', predictor)) %>% 
   ggplot() + 
   geom_line(mapping = aes(y = pred, x = predictor.unscaled, col = predictor),
-            lwd = 1.2) + 
-  geom_ribbon(mapping = aes(ymin = pred.lower, ymax = pred.upper, 
-                            x = predictor.unscaled, fill = predictor), 
+            lwd = 1.2,
+            lineend = "round") + 
+  geom_ribbon(mapping = aes(ymin = pred.lower, ymax = pred.upper, fill = predictor,
+                            x = predictor.unscaled), 
               alpha = 0.4) + 
-#   scale_fill_discrete(name= 'Units of the Predictors', 
-#                       labels =  c('altitude in m asl', 
-#                                    'forest in percent per plot', 
-#                                    'land use heterogenity as Shannon-diversity
-# of local land-use classes', 
-#                                    'mean annual temperature in degree C')) +
-#   scale_colour_discrete(name= 'Units of the Predictors', 
-#                         labels = c('altitude in m asl', 
-#                                    'forest in percent per plot', 
-#                                    'land use heterogenity as Shannon-diversity
-# of local land-use classes', 
-#                                    'mean annual temperature in degree C')) +
-  facet_wrap(~predictor, scales = 'free_x') +
-  labs(x = 'Predictor (for unit see legend)', y ='Predicted Eucalyptus Abundance') +
+  facet_wrap(~predictor, scales = 'free_x',
+             labeller = labeller(predictor = c(
+               Distance_to_Eucalypt_canopy.m. = "Distance to nearest\nEucalyptus canopy (m)",
+               Th_ppm = "Thorium concentration (ppm)"))) +
+  labs(x = 'Predictor (for units see legend)', y ='Predicted Eucalyptus Abundance',
+       color = 'Predictor',
+       fill = 'Predictor') +
+  scale_color_manual(values = c("coral", "lightblue3"),
+                     labels = c("Distance to nearest\nEucalyptus canopy (m)",
+                                "Thorium concentration (ppm)")) +
+  scale_fill_manual(values = c("Light Coral", "lightblue"), guide = "none") +
   theme_bw(base_size = 10) +
-  theme(legend.position = 'right')
+  theme(legend.position = 'right'
+        ,strip.text = element_blank()
+        ,legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.height = unit(1.3, "lines")
+  )
 
+print(plot)
+
+# Figure 1. Plot showing marginal effects of distance to nearest Eucalyptus canopy (red) and
+# Thorium concentration in the soil (blue) in predicting Eucalyptus seedlings count.
+# The solid line indicates predicted counts obtained for each predictor by holding
+# all other predictors constant. Ribbons show 95% confidence intervals.
 ```
 
+# Introduction
 
-# Task
+::: {style="text-align: justify;"}
+Natural regeneration could serve as an affordable strategy for restoring
+large landscapes, but our limited understanding of how different
+environmental, spatial and climatic variables as well as management
+practices impact plant recruitment remains a barrier.
 
-The data comes from a restoration project in Australia, where livestock grazing was removed from properties in the hopes that the Eucalyptus spp. overstorey would regenerate without active planting. Three rounds of surveys were conducted at 18 sites in winter and spring 2006 and autumn 2007. For each survey, a different set of 15 x 15 m quadrats were randomly placed across each site within 60 m of existing tree canopies. The number of quadrats per site depended on the size of the site, ranging from four at smaller sites to 11 at larger sites. The surveys focused on the number of Eucalyptus seedlings in each quadrat, and a suite of environmental and spatial variables were also recorded, including GPS location, aspect, tree canopy cover, distance to tree canopy, and position in the landscape. Ground-layer plant species composition was recorded in three 0.5 x 0.5 m sub-quadrats within each quadrat. Cover estimates were made for each species as well as bare ground, litter (dead organic material), rock and moss/lichen/soil crusts. The data also include climatic data for each GPS location. All variables are explained in the metadata-file below. 
+About 100 tree species of the genus *Eucalyptus* occur naturally in
+Victoria, Australia. They have tiny seeds that are enclosed in hard,
+woody capsules that are usually released from the tree canopy after
+environmental triggers such as fire or drought. The seeds mainly fall
+down and germinate close to the mother tree, but may be dispersed
+further distances by wind or fire.
 
-The following line will read the data (adjust the file path to where you keep the data file): `dat = read.csv("exam2023_data.csv")`
+The Bush Return trial project in the Goulburn Broken catchment in
+Victoria, Australia studied how native eucalyptus trees (*Eucalyptus
+spp.*) regenerated naturally after the removal of livestock grazing on
+18 different private ranches. They were interested in cost-effectively
+increasing native woodland cover across a large landscape, by relying on
+natural regeneration instead of investing in expensive seed planting.
 
+This report investigates the conditions that facilitate and hinder
+natural regeneration of *Eucalyptus spp.* seedlings following livestock
+removal in Victoria, Australia.
+:::
 
-# NOTHING (except of the code link to github) is updated yet! 
+# Methods
 
-# Just remove and fill in text...
+## Survey methods
 
+::: {style="text-align: justify;"}
+The dataset is comprised of data of *Eucalyptus spp.* seedling abundance
+and environmental, spatial and climatic variables that were collected
+during three survery rounds (winter and spring 2006; fall 2007) across
+18 sites after the removal of livestock grazing. The sampling effort
+depended on the size of each site: four to eleven 15 x 15 m sampling
+quadrats were randomly placed across each site within 60 meters of
+existing tree canopies. For each survey period, the location and number
+of quadrats were renewed.
 
+The number of eucalyptus seedlings in each quadrat were counted and
+grouped by height (0 - 0.5 m, 0.5 - 2m, \>2m). Further plant species of
+the field layer were recorded in three 0.5 x 0.5 m sub-quadrats within
+each quadrat.
+:::
 
+## Analysis methods
 
+::: {style="text-align: justify;"}
+For the analysis, we merged the abundance counts of *Eucalyptus spp.*
+seedlings of all heights (0 to \>2 meters). Further, we calculated grass
+cover as the percentage of all exotic and native annual and perennial
+grasses and graminoids.
 
+We analyzed the abundance of *Eucalyptus spp.* seedlings by fitting a
+generalized linear mixed model of the negative binomial family with a
+log-link with solar radiation of the sample year in January (in
+$\frac{WH}{m^2}$), Eucalyptus spp. canopy cover (in percent), distance
+to Eucalyptus spp. canopy (in meters) and bare ground cover (in percent)
+as fixed effects, and private property location and season of data
+collection as random effects.
 
+Property-level differences explained only a small percentage of the
+variation in the abundance of eucalyptus seedlings (`r df["Among"]`\*
+$\%$\*), but improved the model fit enough to be kept in the final
+model. In addition, the variance of the property (random effect) with
+`r int` was much lower than the residual variance of the final model
+(`r theta`) and thus only explained a fraction of the total variance.
+:::
 
-# Task
+## This is an alternative analysis methods section
 
-The following dataset includes the abundance of the bee species Eulaema nigrita in the Brazilian Atlantic forest, and a number of potential predictor variables including climate (mean annual temperature and precipitation, temperature and precipitation seasonality) and land use (proportion forest cover and land use heterogeneity defined as the Shannon diversity (−Σipilnpi) of local land-use classes). The climate data from the Worldclim dataset are much used in ecological studies. The mean annual temperature (MAT) is given in degrees Celsius times 10, the annual precipitation in mm, the temperature seasonality (Tseason) as 100 times the standard deviation of the monthly temperature, and the precipitation seasonality (Pseason) as the CV of monthly precipitation (given as a percent, i.e. times 100). Why is the temperature seasonality measured as a standard deviation and the precipitation as a CV? The effort variable in the log number of hours of sampling, and the method variable indicates whether the collecting was done with hand nets, traps, or a combination of both. Use a GLM to build a model explaining the distribution patterns of Eulaema nigrita. Interpret the results and produce nice tables and figures.
+::: {style="text-align: justify;"}
+We analysed the abundance of *Eucalyptus spp.* seedlings (independently
+of their height) in a generalised linear mixed model framework (GLMM) to
+explore effects of environmental variables on *Eucalyptus spp.*
+establishment.
 
-# 1. Introduction 
+In more detail, we used a GLMM from the negative binomial family with a
+log-link function. First, we corrected for the nuisance in the data
+associated with the sampling process by adding the area and season as
+random effects. Afterwards, we approached our focal study question in a
+step wise manner by adding environmental variables as fixed effects,
+each associated with one of the basic needs of plants:
 
-Bees provide important ecosystem services like pollination and are therefore crucial for ecosystem functioning. Nevertheless, insect and bee populations have been reported to decrease drastically for decades. Thus, effective conservation interventions such as ecosystem restoration are needed. However, for such conservation action by ecosystem restoration a detailled understanding of the bee species' habitat preferences is crucial. 
+1)  Water, represented by mean annual precipitation (in mm) and
+    precipitation (in mm) during the warmest quarter of the year,
+2)  Light, represented by radiation in January and canopy cover of other
+    *Eucalyptus spp.* trees,
+3)  Conditions for seed establishment, represented by the distance to
+    *Eucalyptus spp.* canopy (in m), bare ground and grass cover (both
+    as fractions of survey plot), and
+4)  Mineral presence, represented by Potassium (in percent), Uranium,
+    and Thorium (both in ppm).
 
-Here, I employed abundance monitoring data to explore the habitat preferences of the Bee species *Eulaema nigrita* home to the Brazilian Atlantic Forest and therefore contribute to an improved ecological understanding of the species needed for upcoming conservation action.
+We used the small sample size corrected Aikaike Information criterion
+(AICc) for first finding the best combination of random effects to
+correct for any bias in the sampling process. Afterwards we performed
+additional model selection to get the most parsimonious combination of
+variables within each group of basic plant needs to afterwards add the
+variables from the next goup, following the oder outlined above.
 
-# 2. Methods 
+Inference was based on the single best model with the lowest AICc, and
+we extracted effect sizes, variances explained by the model or single
+variables, and marginal effect visualised as plots. All models were
+fitted in R (R Core Team, 2025) using the package 'glmmTMB' (Brooks et.
+al 2017).
+:::
 
-To better understand the habitat preferences of *Eulaema nigrita*, I analysed bee monitoring data in a generalised linear mixed effects model (GLMM) framework. 
+\vspace{2em}
 
-In more detail, abundance data of *Eulaema nigrita* as independent variable was modeled using a GLMM from the poisson family with a log-link function. Four different dependent variables were utilised to specify environment-abundance relationship: 
+Table 1: Model selection table using Akaike information criterion
+corrected for small sample
+sizes.![](figures/midterm_table1.jpeg){width="\\90%" fig-align="center"}
 
-  1) percent of forest cover per plot;
-  2) altitude in m above sea level (asl); 
-  3) land use heterogeneity, defined as Shannon diversity of the local land use classes; and
-  4) mean annual temperature in degree Celsius;
-  
-  Furthermore, I considered information on the monitoring method (nets, traps or both) and the monitoring effort (measures as time spent in each plot, transferred by taking the log) in the random and fixed effects, respectively, in all fitted models. Thereby, I accounted for difference efficiencies in the applied monitoring methods and varying monitoring efforts, respectively, and reduced the bias due to imperfect detection.
-
-Overall, I fitted five candidate models where all four environmental predictors where added step wise in an additive manner (as ordered above) to built up from simple to more complex models. Each of these candidate models was compared using the AICc (small sample size corrected Aikaile Information Criterion - approaches the classical AIC for large sample sizes and is therefore generally recommended over the AIC) to find the most parsimonious model. However, I retained the correction for the sampling process (survey method and effort, as random and fixed effect) for all candidate models since I assumed both variables to be important for explaining the observation process in all scenarios. Furthermore, I added one reference model where abundance was only explained by sampling method and effort to capture the case that none of my environmental variables is important in explaining the bees abundance.
-
-Afterwards, I employed the (set of) model(s) for inference to extract information on the abundance-environmental covariate relationship as a) effect sizes and b) marginal effect plots of each independent variable found to be important.
-
-All analysis were performed in R (R Core Team, 2025) and models were fitted using the lme4 package (Bates et. al, 2015). 
-
-# 3. Results 
-
-```{r, include=F}
-mean.abund <- mean(predict(best.model, type = 'response'))
-ci.abund <- quantile(predict(best.model, type = 'response'), c(0.05, 0.975))
+```{r, echo=F}
+# #| tbl-cap: "Table 1: Model selection table using Akaike information criterion corrected for small sample sizes."
+# aictable_pretty
 ```
 
-I analysed `{r} dim(data)[1]` abundance observations *Eulaema nigrita* from `{r} length(unique(data$study.area))` survey sites in a poisson GLMM-framework to better understand the habitat preferences of the bee species. 
+# Results
 
-Overall, at each survey site a mean of `{r} mean.abund` (CI: `{r} ci.abund[1]`, `{r} ci.abund[2]`) bees of the species *Eulaema nigrita* were present after correcting for survey method and effort. Thus, the estimated bee abundances differed considerably between survey sites, which can be attributed to habitat differences, as explained by the best, most parsimonious model: Temperature and altitude were the two most important environmental conditions affecting *Eulaema nigrita* abundance, with effect sizes of 1.33 (CI:0.32, 2.34) and 1.23 (CI: 0.21, 2.25). Therefore, bee abundance increased considerably from sea level to `{r} max(data$altitude, na.rm = T)` m above sea level from `{r} plotting.data %>% filter(predictor == 'altitude') %>% slice_min(pred) %>% pull(pred) %>% round(digits = 2)` (CI: 100.89, 111.56) to `{r} plotting.data %>% filter(predictor == 'altitude') %>% slice_max(pred) %>% pull(pred) %>% round(digits = 2)`  (CI: 27.95, 32.20) bees. Likewise, an increase in the mean annual temperature from 20 to 21 degrees Celsius resulted in an abundance increase from 50.86 (CI: 48.12, ) to 57.74 (CI: 54.97, 60.65). Furthermore, percentage of forest cover and to lesser extend land use heterogeneity were important in explaining *Eulaema nigrita* abundance (see Table 2) even though the change in bee abundance per unit standard deviation of both predictors was less considerable. However, there was considerable uncertainty in the estimates of the effect sizes (see Table 1).
+::: {style="text-align: justify;"}
+The abundance of *Eucalyptus spp.* seedlings across all study sites
+showed very high variability relative to its mean (mean =
+`r df["Mean"]`, standard deviation = `r df["SD"]`).
 
-```{r, echo = F}
-#| tbl-cap: "Effect sizes of the model parameters of the single best model detected by AICc (see Table 2). Note that all estaimtes are back-transformed from the link to the natural scale. However, all estimates are in units of standard deviations."
-effect.sizes.pretty
+While broad environmental differences between properties were minimal,
+localized conditions at the plot level played the primary role in
+shaping *Eucalyptus* seedling abundance (Table 2). Proximity to mature
+*Eucalyptus* trees and Thorium concentrations in the soil primarily
+drove *Eucalyptus* seedling abundance. Under average conditions only one
+*Eucalyptus* seedling (`r out[1,1]` $\pm$ `r out[1,2]`) is expected per
+15x15 m quadrat (Table 2). For each standard deviation increase in soil
+Thorium concentration, seedling counts increased by approximately 0.6
+seedlings (`r out[2,1]` $\pm$ `r out[2,2]`), highlighting a potential
+role of soil chemistry in promoting establishment (Table 2, Plot 1).
+Uranium and potassium concentrations may be biologically relevant, but
+with the given dataset their effects could not be distinguished from
+noise once thorium was included in the model (Table 1). In contrast,
+seedling numbers declined by roughly 1.8 seedlings (`r out[3,1]` $\pm$
+`r out[3,2]`) for every standard deviation increase in distance from
+mature *Eucalyptus* trees, emphasizing the importance of adult trees in
+providing seed sources or suitable microsites for recruitment (Table 2,
+Plot 1).
+:::
+
+\vspace{2em}
+
+Table 2: Effect sizes of the final model fitted to explain *Eucalyptus*
+seedlings abundance.![](figures/midterm_table2.jpeg){width="\\90%"
+fig-align="center"}
+
+```{r, echo=F}
+# #| tbl-cap: "Table 2: Effect sizes of the final model fitted to explain Eucalyptus seedlings abundance."
+# effect.sizes.pretty
 ```
 
-All inference was solely based on the single best model since I found overwhelming support for this full model indicated by the delta AICc and AICc weights, for more details see Table 2. No model averaging with other candidate models was needed (see Table 2).
-
-
-```{r, echo = F, fig.}
-#| tbl-cap: "Model selection table for all four fitted candidate models ordered by minimal AICc. AICc is the small sample size corrected Aikaike Information criterion."
-aictable_pretty
-```
-
-
-# 4. Discussion and Conclusion
-
-I used a GLMM modelling framework to better understand the habitat requirements of the Brazilian bee species *Eulaema nigrita*. 
-
-```{r, echo = F}
-#| fig-width: 10
-#| fig-height: 6
-#| fig.align: center
-#| fig-cap: "Effect of environmental covariates on predicted Eulaema nigrita abundance. The Abundance was explained using a GLMM framework where only the influence of the fixed effects included as environmental covariates are shown, but fixed and random effects were used to correct for sampling effort and method, respectively."
-
+```{r, echo =FALSE}
+#| fig-cap: "Plot showing marginal effects of distance to nearest Eucalyptus canopy (red) and Thorium concentration in the soil (blue) in predicting Eucalyptus seedlings count. The solid line indicates predicted counts obtained for each predictor by holding all other predictors constant. Ribbons show 95% confidence intervals."
 plot
 ```
 
-I found that mean annual temperature, and altitude were the two major environmental variables explaining the species' abundance both showing positive relationships. However, percentage of forest cover and land use heterogeneity were important variables to explain bee abundance (see Table 2) too, even though it's net effect on the abundance was comparably less pronounced (see Table 1) and confounded by significant uncertainty. 
+# Interpretation/Conclusion
 
-Transferring this knowledge into a conservation context, I found that the distribution of *Eulaema nigrita* is largely driven by mean annual temperature and altitude - both factors we cannot (directly) influence. However, forest cover as another major predictor of bee abundance may be subject to human alteration. Thus, a conservation intervention should focus on forest by reducing forest cover at the sites where the bee might be a target species and possibly (but to lesser extend) on increasing the land use heterogeneity for example by adopting new, small scale farming methods with high diversity of different land treatments on small space.
+::: {style="text-align: justify;"}
+Natural regeneration of *Eucalyptus spp.* was primarily influenced by
+soil thorium content and proximity to mature *Eucalyptus* trees. In
+areas lacking nearby mature trees but otherwise suitable environmental
+conditions, targeted seed dispersal may accelerate regeneration by
+mimicking natural seed sources, avoiding the costs associated with
+seedling planting.
 
-# 5. Code Availability
+Although this study focused on natural regeneration, 97% of sampled
+quadrats contained no *Eucalyptus* individuals taller than 2 m. Based on
+the available dataset and metadata, it remains unclear whether this
+reflects high early-stage mortality or insufficient time since livestock
+removal for seedlings to reach advanced growth stages. Additional
+sampling after a longer recovery period may be required to distinguish
+between these possibilities.
+:::
 
-Please find the code on my [github page](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter11_Practice_Exam.qmd). 
+# R-Code
 
-# 6. Questions
-
-1) **Confidence intervals**: For GLM's there seem to exist different forms of calculating/extracting CI's from the model or model predictions. Especially, the method showed in the lectures seem to yield too narrow CI's and therefore seem to be inappropriate due to issues with conversion between link and data scale. Which other methods should we use instead?
-
-2) **Effect size table**: How do I best report the effect sizes? On the link scale? Or rescaled (if I fitted the model with z-transformed data, which is often recommended for more complex models)? Is there a convenient workflow for doing so ?- I implemented all this but wasn't sure if I did any mistakes in the recalculation and consequently removed this again...) Furthermore, I wonder why the effect size of forest is positive in my table but the relationship seems to be negative?
-
-3) **Effect of Altitude and Temperature**: There seems to be a positive and significant correlation between altitude and temperature. How should I have dealt with this issue (I decided to just ignore this here to fit the scope of this assignment)? Furthermore, I wonder how to interpret the relatonship I found for temperature and altitude - the bee increases for both, higher temperature and higher altitudes? This doesn't make a lot of biological sense. How could I resolve this? Including an interaction between altitude:temperature? 
-
-4) **Justification of candidate models**: I basically didn't justify my four candidate models at all. However, I could justify every single predictor, which would make sense in speciec distribution modelling since most species are subject to these environmental covariates. However, given the aim of this study (see motivation in the introduction), how would I best deal with the needed justification of the candidate model set?
-
-5) **Model diagnostics**: The model diagnostics of this model do not really look great (I looked at them using DHARMa) - what would be recommended to deal with this? 
-
-6) **Results section**: What model outputs do you want to be described in the results section? I find it slightly tedious to describe every single output from the effect size table if there is a table anyways (and I find scientific papers hard to read which do this)...
-
-7) **Your comments**: Do you have any comments? What should I continue doing like I did this time and what should I def change?
-
-**NB**: In case it might be easier to have a chat about these things, I'm happy to do so after the next lecture.
-
+Please find the code on:
+[githubpage](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter11_Practice_Exam.qmd).
