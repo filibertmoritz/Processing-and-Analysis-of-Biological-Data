@@ -2,7 +2,12 @@
 title: "What determines fitness in *Penstemon digitalis*?"
 subtitle: "Exam BIOS15: Processing and Analysis of Biological Data"
 author: 'Filibert Heim'
-format: pdf
+# format: pdf
+format:
+  pdf:
+    documentclass: article
+    geometry: margin=2.7cm
+    fontsize: 11pt
 date: "`r Sys.Date()`"
 fig_caption: yes
 pandoc_args: ["--wrap=none"]
@@ -308,52 +313,45 @@ In more detail, we specified the penotype-fitness relationship using a) **Flower
 
 'Fitness ~ Flower size + Scent + Flowering date + Height + Population + (1|Block)'
 
-Overall, we fitted six candidate models where all five predictors where added step wise in an additive manner (as ordered above) [to built up from simple to more complex models]. Each of these candidate models was compared using the AICc (small sample size corrected Aikaile Information Criterion) to find the most parsimonious model. Furthermore, we added one reference model where fitness was only explained by the experimental block to capture the case that none of the predictor variables was explanatory important.
+Overall, we fitted six candidate models where all five predictors where added step wise in an additive manner (as ordered above). Each of the candidate models was compared using the AICc (small sample size corrected Aikaile Information Criterion) to find the most parsimonious model. Furthermore, we added one reference model where fitness was only explained by the experimental block to capture the case that none of the predictor variables was explanatory important.
 
-We employed the single best model for inference and extracted information on a) the population specific fitness, and b) the relation between phenotypic traits and fitness. Therefore, we reported effect sizes produced marginal effect plots of each independent variable retained in the best model and thus considered as important for explaining *Penstemon digitalis* fitness. All analysis were performed in R (R Core Team, 2024) and models were fitted using the 'lme4' package (Bates et. al, 2015). 
+We utilised the single best model for inference, extracted effect sizes and produced marginal effect plots of each independent variable retained in the best model. All analysis were performed in R (R Core Team, 2024) and models were fitted using the 'lme4' package (Bates et. al, 2015). 
 
 # 3. Results 
 We found that *Penstemon digitalis* fitness was best described by a model consisting of floral scent, flowering date, plant height, flower size and the population of origin explaining `{r} round(r2c,3)*100` % of the variance in the data (conditional $r^2$: `{r} round(r2c,2)`). With a $\Delta$AIC of 0.92, this model gained overwhelming support as most parsimonous model out of the considered candidate model set (see Table 1).
 
 
 ```{r, echo = F, fig.}
-#| tbl-cap: "Model selection table for all considered candidate models ordered by minimal AICc (small sample size corrected Aikaike Information criterion)."
+#| tbl-cap: "Model selection table for all considered candidate models ordered by minimal AICc (small sample size corrected Aikaike Information Criterion). The global model had a conditional r-squared of 55.8 % and a marginal r-squared of 44.5 %."
 aictable_pretty
 ```
 
-However, effect sizes differed considerably between phenotypic traits: Total floral scent emission had the strongest association with fitness (slope `{r} e.scent` fitness per unit SD (confidence intervals (CI: 2.5 %, 97.5 %): `{r} ci.scent[1]`, `{r} ci.scent[2]`). For example, a change of 50 % in total floral scent emissions of the population 'Neimi Rd' resulted in an fitness increase of `{r} round(difference['pred'],1)` (`{r} round(difference['pred.upper'],1)`, `{r} round(difference['pred.lower'],1)`) %. Flowering date and and plant height had a slightly lower but still notable effect on fitness (with slopes of `{r} e.flowering.date` (`{r} ci.flowering.date[1]`, `{r} ci.flowering.date[2]`) and `{r} e.height` (`{r} ci.height[1]`, `{r} ci.height[2]`) in fitness per unit SD). In contrast, flower size had only little effect on *Penstemon digitalis* fitness (see Table 2 and Figure 1).
+However, effect sizes differed considerably between phenotypic traits: Total floral scent emission had the strongest association with fitness (slope `{r} e.scent` fitness per unit SD (confidence intervals (CI: 2.5 %, 97.5 %): `{r} ci.scent[1]`, `{r} ci.scent[2]`). For example, a change of 50 % in total floral scent emissions of the population 'Neimi Rd' resulted in an fitness increase of `{r} round(difference['pred'],1)` (`{r} round(difference['pred.upper'],1)`, `{r} round(difference['pred.lower'],1)`) %. Flowering date and and plant height had a slightly lower but still notable effect on fitness (with slopes of `{r} e.flowering.date` (`{r} ci.flowering.date[1]`, `{r} ci.flowering.date[2]`) and `{r} e.height` (`{r} ci.height[1]`, `{r} ci.height[2]`) in fitness per unit SD). In contrast, flower size had only little effect on fitness (see Table 2 and Figure 1).
 
 The source population was an important predictor for *Penstemon digitalis* fitness. In more detail, the populations 'Whipple Farm'  and 'Neimi Rd' had the highest fitness with values of `{r} round(W.Farm.mean,1) ` (`{r} round(W.Farm.lower,1) `, `{r} round(N.Rd.upper,1)`) and `{r} round(N.Rd.mean,1) ` (`{r} round(N.Rd.lower,1) `, `{r} round(W.Farm.upper,1)`), respectively. In contrast, the donor population 'Turkey Hill Rd' possessed a much lower average fitness of only `{r} round(T.Hill.mean,1) ` (`{r} round(T.Hill.lower,1) `, `{r} round(T.Hill.upper,1)`) (see Table 1). 
 
 ```{r, echo = F}
-#| tbl-cap: "Parameter estimates of the single best (LMM) model explaining *Penstemon digitalis* fitness by phenotypic traits and source population. All estimates of numeric variables are in units of standard deviations. The most parsimonous model was detected by AICc (see Table 2)"
-#| 
+#| tbl-cap: "Parameter estimates of the single best (LMM) model explaining *Penstemon digitalis* fitness by phenotypic traits and source population. All estimates of numeric variables are in units of standard deviations. The most parsimonous model was detected by AICc and supported over the null model with only a mixed effect for experimental block with Delta AIC = 39.87 (see Table 2). Conditional r-squared = 55.8 % marginal r-squared = 44.5 %."
 effect.sizes.pretty 
 ```
 
-# 4. Discussion and Conclusion 
+# 4. Discussion and conclusion
+We analysed fitness measurements from `{r} dim(data)[1]` *Penstemon digitalis* plants which originated from three source populations to understand their effect as well as the influence of phenotypic traits on fitness to inform plant breeding for conservation gardening. 
+
+We found that the studied populations differ in their fitness, but higher fitness is also associated with high floral scent emissions, larger plants and an earlier flowering date (see Table 2 and Figure 1). 
 ```{r, echo = F}
 #| fig-width: 9
 #| fig-height: 7
 #| fig.align: center
-#| fig-cap: "Effect of phenotypic traits and different source populations on *Penstemon digitalis* fitness in a common garden experiment. Fitness was assessed as a composite measure based on fruit number and weight and analysed in a linear mixed effect model with a the experimental block as random effect to correct noise originating from the experimental set up."
+#| fig-cap: "Effect of phenotypic traits and different source populations on *Penstemon digitalis* fitness in a common garden experiment. Fitness was assessed as a composite measure based on fruit number and weight and analysed in a linear mixed effect model (LMM) with experimental block as random effect to correct noise originating from the experimental set up."
 
 plot
 ```
-
-We analysed fitness measurements from `{r} dim(data)[1]` *Penstemon digitalis* plants which originated from three source populations to understand their effect as well as the influence of phenotypic traits on fitness to inform plant breeding for conservation gardening. 
-
-We found that the studied populations differ in their fitness, but higher fitness is also associated with high floral scent emissions, larger plants and an earlier flowering date (see Table 2 and Figure 1). 
 
 We caution that the effect of phenotypic traits on fitness might differ by population, however, we did not consider this hypothesis in our candidate model set since too little data was available to fit such a highly parameterised model. Thus, more data and research is needed to facilitate a deeper  understanding of the population specific phenotypic traits driving *Penstemon digitalis* fitness. 
 
 In conclusion, we recommend to select *Penstemon digitalis* individuals from the 'Whipple Farm' and 'Neimi Rd'  populations for breeding that are large, flower early and possess an intense smell - the latter phenotypic trait might not only benefit pollinators but might also have a pleasant side effects for gardeners.
 
 # 5. Code Availability
-
 Please find the code on my [github page](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter13_Exam.qmd). 
 
-
-# 5. Bibliography 
-
-# 6. Code and data availability 
