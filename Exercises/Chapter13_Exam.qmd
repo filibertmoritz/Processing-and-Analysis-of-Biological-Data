@@ -1,0 +1,359 @@
+---
+title: "What determines fitness in *Penstemon digitalis*?"
+subtitle: "Exam BIOS15: Processing and Analysis of Biological Data"
+author: 'Filibert Heim'
+format: pdf
+date: "`r Sys.Date()`"
+fig_caption: yes
+pandoc_args: ["--wrap=none"]
+---
+```{r, message=F, include=F, warnings = F}
+# some preparations 
+library(tidyverse)
+select <- dplyr::select
+rename <- dplyr::rename 
+filter <- dplyr::filter
+# library(GGally)
+library(corrplot)
+# library(broom.mixed)
+library(MuMIn)
+# library(AICcmodavg)
+library(lme4)
+library(knitr)
+library(DHARMa)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 1. Load data and some data preparation ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# read in data 
+data <- read.table(file = 'C:/Users/filib/Documents/Studium/Master/Processing and Analysis of Biological Data/data/penstemon.txt', header = T, stringsAsFactors = T)
+
+# get an impression of the data 
+str(data)
+data <- data %>% rename(population = Pop, flower.size = flwsize, 
+                        block = Block,
+                        flowering.date = FlwDate, 
+                        inforescence.length = InflorLen, 
+                        # n.flowers = flowers, 
+                        n.aborted.flowers = aborted, n.fruits = fruits, 
+                        # fitness = fitness, 
+                        open.flowers = openflws, 
+                        scent = tscent) %>% 
+  mutate(population = factor(case_when(population == 'NR' ~ 'Neimi Rd', 
+                                population == 'TH' ~ 'Turkey Hill Rd', 
+                                population == 'WF' ~'Whipple Farm')))
+
+# corrplot(cor(data %>% select(-block, -population))) # get an idea of correlations
+```
+
+```{r, include=F, warning=FALSE}
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 2. Scaling of predictor variables ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# scale predictors, even for linear mixed effect model 
+data <- data %>% 
+  mutate(flower.size.scaled = scale(flower.size)[,1], 
+         flowering.date.scaled = scale(flowering.date)[,1], 
+         height.scaled = scale(height)[,1], 
+         inflorescence.length.scaled = scale(inforescence.length)[,1], 
+         flowers.scaled = scale(flowers)[,1], 
+         n.aborted.flowers.scaled = scale(n.aborted.flowers)[,1], 
+         n.fruits.scaled = scale(n.fruits)[,1], 
+         fitness.scaled = scale(fitness)[,1], 
+         open.flowers.scaled = scale(open.flowers)[,1], 
+         scent.scaled = scale(scent)[,1])
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 3. Built models ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# built formulas for candidate models 
+formulas <- list(model1 = formula(fitness ~ 1 + (1|block)), 
+                 model2 = formula(fitness ~ flower.size.scaled + (1|block)),
+                 model3 = formula(fitness ~ flower.size.scaled + scent.scaled + (1|block)), 
+                 model4 = formula(fitness ~ flower.size.scaled + scent.scaled + flowering.date.scaled + (1|block)), 
+                 model5 = formula(fitness ~ flower.size.scaled + scent.scaled + flowering.date.scaled + height.scaled + (1|block)), 
+                 model6 = formula(fitness ~ flower.size.scaled + scent.scaled + flowering.date.scaled + height.scaled + population + (1|block)) 
+                 #model7 = formula(fitness ~ flower.size.scaled*population + flowering.date.scaled*population + height.scaled*population + scent.scaled*population + population + (1|block))
+                 )
+
+# fit models in loop and save in list 
+models <- list()
+for(f in names(formulas)){
+  models[[f]] <- lmer(formula = formulas[[f]], # linear mixed effect model! 
+                      #family = gaussian(link = 'identity'), # this is only for glmm's! 
+                       data = data, REML = F) # enforce maxLik method to enable use of AICc
+}
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 4. Model selection ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# find best model using AICc 
+aictable <- AICcmodavg::aictab(models) # the full model is by far the best 
+aictable_pretty <- aictable %>% tibble() %>%
+  rename(`Number of model parameters` = K, `Delta AICc` = Delta_AICc, 
+         `AICc weights` = AICcWt, Model = Modnames) %>% 
+  select(-LL, -Cum.Wt, -ModelLik) %>% 
+  mutate(Model = case_when(Model == 'model1' ~ '1 + (1|Block))', 
+                           Model == 'model2' ~ 'Flower size+ (1|Block)', 
+                           Model == 'model3' ~ 'Flower size + Scent + (1|Block)', 
+                           Model == 'model4' ~ 'Flower size + Scent + Flowering date + (1|Block)',
+                           Model == 'model5' ~ 'Flower size + Scent + Flowering date + Height + (1|Block)', 
+                           Model == 'model6' ~ 'Flower size + Scent + Flowering date + Height + Population + (1|Block)'), 
+         across(c(AICc, `Delta AICc`, `AICc weights`), ~ round(.x, 2))) %>% 
+  kable()
+
+# manually save best model as best model object
+best.model <- models[[6]]
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 5. Model diagnostics ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# perform model diagnostics using DHARMa 
+plot(simulateResiduals(best.model)) # looks alright considering small sample size and sensitivity of DHARMa's diagnostic 
+testDispersion(simulateResiduals(best.model,re.form = NULL)) # re.form needed for conditional simulations, as recommended in https://cran.r-project.org/web/packages/DHARMa/vignettes/DHARMa.html, 1.1 is alright - no overdispersion
+
+# get summary of the model
+s <- summary(best.model)
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 6. Effect sizes ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# get effect sizes 
+# tidy(best.model, effects = "fixed", conf.int = TRUE) # the same in a more automated way
+effect.sizes <- tibble(Parameters =  str_remove(rownames(s$coefficients), 
+                                                pattern = '\\.scaled') ,
+       `Parameter estimates` = s$coefficients[,1], 
+       `2.5% confidence level` = s$coefficients[,1] - 1.96*s$coefficients[,2], 
+       `97.5% confidence level` = s$coefficients[,1] + 1.96*s$coefficients[,2],
+       # `P-value` = s$coefficients[,4]
+       ) %>% 
+   mutate(across(c('Parameter estimates', '2.5% confidence level',
+                   '97.5% confidence level',# 'P-value'
+                   ), ~ round(.x, 2)),
+          Parameters = case_when(Parameters == 'populationTurkey Hill Rd' ~ 'Population:Turkey Hill Rd', 
+                                 Parameters == 'populationWhipple Farm' ~ 'Population:Whipple Farm', 
+                                 .default = Parameters),
+          Parameters = str_replace_all(str_to_title(Parameters), pattern = '\\.', ' '))
+effect.sizes.pretty <- effect.sizes %>%
+  kable()
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 8. Data prep for prediction ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# make data for prediction
+n = 2000
+make.seq <- function(x, n = 500) { # define a function to create a seq of data
+  seq(min(x, na.rm = TRUE), max(x, na.rm = TRUE), length.out = n)
+}
+
+
+new.data <- list() # create an input list to store df from each iteration
+for(pop in levels(data$population)){ # loop over populations and create newdata
+  d <- data %>% filter(population == pop) # ensures that new data fits range of populations!
+  new.data[[pop]] <-  data.frame(flower.size.scaled = make.seq(d$flower.size.scaled,n = n), 
+                                 flower.size = make.seq(d$flower.size,n = n), 
+                                 flowering.date.scaled =  make.seq(d$flowering.date.scaled, n = n), 
+                                 flowering.date = make.seq(d$flowering.date,n = n), 
+                                 height.scaled = make.seq(d$height.scaled, n = n), 
+                                 height = make.seq(d$height, n = n), 
+                                 scent.scaled = make.seq(d$scent.scaled, n = n), 
+                                 scent = make.seq(d$scent, n = n), 
+                                 population = factor(pop))
+  rm(d) # remove help data 
+}
+new.data <- bind_rows(new.data) # bring all data together into one df
+
+# get all predictors
+predictors <- names(new.data)[grep('scaled', x = names(new.data))]
+predictors <- predictors[!grepl('population', x = predictors)] # remove population
+
+# create input df to collect predicted data for plotting
+plotting.data <- data.frame(predictor = NULL, 
+                            predictor.scaled = NULL, 
+                            pred = NULL)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 9. Actual prediction ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# predict for each predictor while holding the others constant their mean 0
+for(p in predictors){
+  nd <- new.data %>% mutate(across(.cols = where(is.numeric) & !all_of(p), ~0))
+  
+  # predict
+  pred <- predict(best.model, newdata = nd , se.fit = T, re.form = NA)
+  
+  # collect data in df
+  dat <- data.frame(predictor = str_remove(p, pattern = '\\.scaled'), 
+                    population = rep(levels(data$population), each = n),
+                     predictor.unscaled = 
+                      new.data[[str_remove(p, pattern = '\\.scaled')]],
+                    predictor.scaled = new.data[[p]], 
+                    pred = pred$fit, 
+                    pred.se = pred$se.fit, 
+                    pred.upper = pred$fit + pred$se.fit*1.96,
+                    pred.lower = pred$fit - pred$se.fit*1.96)
+  
+  # paste all predicted data together
+  plotting.data <- bind_rows(plotting.data, dat)
+  
+}
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 10. Plot marginal effect plots ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# prep raw data for plotting points
+plotting.data.raw <- data %>% 
+  pivot_longer(cols = -c(population, fitness), 
+               names_to = "predictor", 
+               values_to = 'value') %>% 
+  filter(predictor %in% str_remove(predictors, '.scaled')) %>% 
+  mutate(predictor = case_when(predictor == 'flower.size' ~ 'Flower size in mm',
+                               predictor == 'flowering.date' ~ 'Flowering date as Julian date', 
+                               predictor == 'height' ~ 'Height in cm', 
+                               predictor == 'scent' ~ 'Scent as emission in ng per liter per hour'))
+
+# plot the marginal effects 
+plot <- plotting.data %>% 
+  mutate(predictor = case_when(predictor == 'flower.size' ~ 'Flower size in mm',
+                               predictor == 'flowering.date' ~ 'Flowering date as Julian date', 
+                               predictor == 'height' ~ 'Height in cm', 
+                               predictor == 'scent' ~ 'Scent as emission in ng per liter per hour')) %>% 
+  ggplot() + 
+  geom_line(mapping = aes(y = pred, x = predictor.unscaled,
+                          col = population),
+            lwd = 1.2) + 
+  geom_ribbon(mapping = aes(ymin = pred.lower, ymax = pred.upper, 
+                            x = predictor.unscaled, fill = population),
+              alpha = 0.15) + 
+  geom_point(data = plotting.data.raw, 
+             mapping = aes(y = fitness, x = value, colour  = population), alpha = 0.4) +
+  scale_fill_discrete(name= 'Population') +
+  scale_colour_discrete(name= 'Population') +
+  facet_wrap(~predictor, scales = 'free_x') +
+  labs(x = 'Predictor (for units see plot headers)', y = 'Predicted fitness (based on fruit number and weight)') +
+  theme_bw(base_size = 13) +
+  theme(legend.position = 'right')
+plot
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 11. Calculate a few measures for results section ####
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# get a few characteristics of the model 
+r2m <- r.squaredGLMM(best.model)[1] # condit. r2 for only fixed effects
+r2c <- r.squaredGLMM(best.model)[2] # condit. r2 for random + fixed effects
+
+# predict fitness for each population 
+mean.fitness <- mean(predict(best.model, type = 'response'))
+ci.fitness <- quantile(predict(best.model, type = 'response'), c(0.025, 0.975))
+
+# effect sizes 
+e.scent <- round(s$coefficients["scent.scaled", 1],1)
+ci.scent <- round(c(s$coefficients["scent.scaled", 1] - 1.96*s$coefficients["scent.scaled", 2], 
+                    s$coefficients["scent.scaled", 1] + 1.96*s$coefficients["scent.scaled", 2]),1)
+e.flower.size <- round(s$coefficients["flower.size.scaled", 1],1)
+ci.flower.size <- round(c(s$coefficients["flower.size.scaled", 1] - 1.96*s$coefficients["flower.size.scaled", 2], 
+                    s$coefficients["flower.size.scaled", 1] + 1.96*s$coefficients["flower.size.scaled", 2]),1)
+e.height <- round(s$coefficients["flower.size.scaled", 1],1)
+ci.height<- round(c(s$coefficients["height.scaled", 1] - 1.96*s$coefficients["height.scaled", 2], 
+                    s$coefficients["height.scaled", 1] + 1.96*s$coefficients["height.scaled", 2]),1)
+e.flowering.date <- round(s$coefficients["flowering.date.scaled", 1],1)
+ci.flowering.date <- round(c(s$coefficients["flowering.date.scaled", 1] - 1.96*s$coefficients["flowering.date.scaled", 2],
+                    s$coefficients["flowering.date.scaled", 1] + 1.96*s$coefficients["flowering.date.scaled", 2]),1)
+
+# example extraction for change in predictor leading to change in fitness
+change <- plotting.data %>% 
+  filter(population == levels(data$population)[1], predictor == 'scent') %>% 
+  slice_min(abs(predictor.scaled), n = 1)
+no.change <- plotting.data %>% 
+  filter(population == levels(data$population)[1], predictor == 'scent') %>% 
+  slice_min(predictor.scaled, n = 1)
+difference <- (change %>% select(where(is.numeric))) - (no.change %>% select(where(is.numeric)))
+
+# get mean fitness per population (this is possible since all numeric variables are scaled to mean = 0 and sd = 1)
+N.Rd.mean <- s$coefficients[1,1]
+N.Rd.lower <- s$coefficients[1,1] - 1.96*s$coefficients[1,2]
+N.Rd.upper <- s$coefficients[1,1] + 1.96*s$coefficients[1,2]
+
+T.Hill.mean <- (s$coefficients[1,1]+ s$coefficients[6,1])
+T.Hill.lower <- (s$coefficients[1,1]+ s$coefficients[6,1]) - 1.96*(s$coefficients[6,2])
+T.Hill.upper <- (s$coefficients[1,1]+ s$coefficients[6,1]) + 1.96*(s$coefficients[6,2])
+
+W.Farm.mean <- (s$coefficients[1,1]+ s$coefficients[7,1])
+W.Farm.lower <- (s$coefficients[1,1]+ s$coefficients[7,1]) - 1.96*(s$coefficients[7,2])
+W.Farm.upper <- (s$coefficients[1,1]+ s$coefficients[7,1]) + 1.96*(s$coefficients[7,2])
+
+```
+# 1. Introduction 
+Insect populations worldwide are declining dramatically leading to both an overall reduction in insect biomass but also species extinctions. Thus, scientists are calling for conservation action and one possible preservation approach in urban areas is the selection of native, pollinator-friendly garden plants. In North America, a plant particularly suitable for this purpose is *Penstemon digitalis* and we aim to distribute seeds to support local gardeners. Consequently, we have to start breeding *Penstemon digitalis* and aim for generally fit and robust individuals that can establish vital, persistent populations. To inform the breeding process, we performed an experiment where *Penstemon digitalis* individuals from three nearby populations were grown in an outdoor common garden and phenotypic data together with fitness were sampled. We aim to understand a) if populations differ in their fitness and if so which has the highest fitness and b) which phenotypic traits are associated with higher or lower plant fitness.  
+
+# 2. Methods
+To improve our understanding of factors that might influence *Penstemon digitalis* fitness, we used a linear mixed effects model (LMM) framework to analyse data from `{r} dim(data)[1]` individuals of three source populations which were grown in a common garden experiment. We used fitness data calculated from the number and mass of *Penstemon digitalis* fruits as independent variable and employed five dependent variables to explore their effect on fitness. 
+
+In more detail, we specified the penotype-fitness relationship using a) **Flower size** (in mm) and b) total **Floral scent** emission (ng per liter per hour) because pollination might be more likely for large, attractive flowers with a strong, appealing smell attracting pollinators. Additionally, we included the c) **Flowering date** (as Julian date) to model the possibility that earlier or later flowering plants better match the flying season of Penstemon's main pollinators. Also, we added the plant **Height** (in cm) into the model since larger, more vital plants might be able to invest more resources into reproduction leading. Lastly, the **Population** (factorial with three levels) of origin was included to test for and estimate fitness differences between populations. Furthermore, we considered information on the planting **Block**s in the common garden as random effect to account for any noise in the data originating from experimental block possibly having dissimilar growing conditions such as soil, or proximity to light. We retained this correction in all fitted models since we assumed that this was an important cause of variability connected solely to the experimental set up in the common garden experiment. Consequently, our most complex, global model was given by: 
+
+'Fitness ~ Flower size + Scent + Flowering date + Height + Population + (1|Block)'
+
+Overall, we fitted six candidate models where all five predictors where added step wise in an additive manner (as ordered above) [to built up from simple to more complex models]. Each of these candidate models was compared using the AICc (small sample size corrected Aikaile Information Criterion) to find the most parsimonious model. Furthermore, we added one reference model where fitness was only explained by the experimental block to capture the case that none of the predictor variables was explanatory important.
+
+We employed the single best model for inference and extracted information on a) the population specific fitness, and b) the relation between phenotypic traits and fitness. Therefore, we reported effect sizes produced marginal effect plots of each independent variable retained in the best model and thus considered as important for explaining *Penstemon digitalis* fitness. All analysis were performed in R (R Core Team, 2024) and models were fitted using the 'lme4' package (Bates et. al, 2015). 
+
+# 3. Results 
+We found that *Penstemon digitalis* fitness was best described by a model consisting of floral scent, flowering date, plant height, flower size and the population of origin explaining `{r} round(r2c,3)*100` % of the variance in the data (conditional $r^2$: `{r} round(r2c,2)`). With a $\Delta$AIC of 0.92, this model gained overwhelming support as most parsimonous model out of the considered candidate model set (see Table 1).
+
+
+```{r, echo = F, fig.}
+#| tbl-cap: "Model selection table for all considered candidate models ordered by minimal AICc (small sample size corrected Aikaike Information criterion)."
+aictable_pretty
+```
+
+However, effect sizes differed considerably between phenotypic traits: Total floral scent emission had the strongest association with fitness (slope `{r} e.scent` fitness per unit SD (confidence intervals (CI: 2.5 %, 97.5 %): `{r} ci.scent[1]`, `{r} ci.scent[2]`). For example, a change of 50 % in total floral scent emissions of the population 'Neimi Rd' resulted in an fitness increase of `{r} round(difference['pred'],1)` (`{r} round(difference['pred.upper'],1)`, `{r} round(difference['pred.lower'],1)`) %. Flowering date and and plant height had a slightly lower but still notable effect on fitness (with slopes of `{r} e.flowering.date` (`{r} ci.flowering.date[1]`, `{r} ci.flowering.date[2]`) and `{r} e.height` (`{r} ci.height[1]`, `{r} ci.height[2]`) in fitness per unit SD). In contrast, flower size had only little effect on *Penstemon digitalis* fitness (see Table 2 and Figure 1).
+
+The source population was an important predictor for *Penstemon digitalis* fitness. In more detail, the populations 'Whipple Farm'  and 'Neimi Rd' had the highest fitness with values of `{r} round(W.Farm.mean,1) ` (`{r} round(W.Farm.lower,1) `, `{r} round(N.Rd.upper,1)`) and `{r} round(N.Rd.mean,1) ` (`{r} round(N.Rd.lower,1) `, `{r} round(W.Farm.upper,1)`), respectively. In contrast, the donor population 'Turkey Hill Rd' possessed a much lower average fitness of only `{r} round(T.Hill.mean,1) ` (`{r} round(T.Hill.lower,1) `, `{r} round(T.Hill.upper,1)`) (see Table 1). 
+
+```{r, echo = F}
+#| tbl-cap: "Parameter estimates of the single best (LMM) model explaining *Penstemon digitalis* fitness by phenotypic traits and source population. All estimates of numeric variables are in units of standard deviations. The most parsimonous model was detected by AICc (see Table 2)"
+#| 
+effect.sizes.pretty 
+```
+
+# 4. Discussion and Conclusion 
+```{r, echo = F}
+#| fig-width: 9
+#| fig-height: 7
+#| fig.align: center
+#| fig-cap: "Effect of phenotypic traits and different source populations on *Penstemon digitalis* fitness in a common garden experiment. Fitness was assessed as a composite measure based on fruit number and weight and analysed in a linear mixed effect model with a the experimental block as random effect to correct noise originating from the experimental set up."
+
+plot
+```
+
+We analysed fitness measurements from `{r} dim(data)[1]` *Penstemon digitalis* plants which originated from three source populations to understand their effect as well as the influence of phenotypic traits on fitness to inform plant breeding for conservation gardening. 
+
+We found that the studied populations differ in their fitness, but higher fitness is also associated with high floral scent emissions, larger plants and an earlier flowering date (see Table 2 and Figure 1). 
+
+We caution that the effect of phenotypic traits on fitness might differ by population, however, we did not consider this hypothesis in our candidate model set since too little data was available to fit such a highly parameterised model. Thus, more data and research is needed to facilitate a deeper  understanding of the population specific phenotypic traits driving *Penstemon digitalis* fitness. 
+
+In conclusion, we recommend to select *Penstemon digitalis* individuals from the 'Whipple Farm' and 'Neimi Rd'  populations for breeding that are large, flower early and possess an intense smell - the latter phenotypic trait might not only benefit pollinators but might also have a pleasant side effects for gardeners.
+
+# 5. Code Availability
+
+Please find the code on my [github page](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter5_GLM_Assignment.qmd). 
+
+
+# 5. Bibliography 
+
+# 6. Code and data availability 
