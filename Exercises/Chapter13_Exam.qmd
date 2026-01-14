@@ -351,7 +351,7 @@ In conclusion, we recommend to select *Penstemon digitalis* individuals from the
 
 # 5. Code Availability
 
-Please find the code on my [github page](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter5_GLM_Assignment.qmd). 
+Please find the code on my [github page](https://github.com/filibertmoritz/Processing-and-Analysis-of-Biological-Data/blob/main/Exercises/Chapter13_Exam.qmd). 
 
 
 # 5. Bibliography 
